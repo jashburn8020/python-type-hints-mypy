@@ -18,6 +18,7 @@
     - [6. Automate annotation of legacy code](#6-automate-annotation-of-legacy-code)
     - [Speed up mypy runs](#speed-up-mypy-runs)
     - [Introduce stricter options](#introduce-stricter-options)
+  - [Built-in types](#built-in-types)
   - [Sources](#sources)
 
 ## Introduction
@@ -311,6 +312,20 @@ ignore_missing_imports = True
 ### Introduce stricter options
 
 - Once you get started with static typing, you may want to explore the various strictness options mypy provides to catch more bugs
+
+## Built-in types
+
+- See:
+  - https://mypy.readthedocs.io/en/stable/builtin_types.html
+  - [`typing`](https://docs.python.org/3/library/typing.html) module
+- The type `Dict` is a **generic class**, signified by type arguments within `[...]`
+  - e.g., `Dict[int, str]` is a dictionary from integers to strings
+- `List` is another generic class
+- `Dict` and `List` are aliases for the built-ins `dict` and `list`, respectively
+- `Iterable`, `Sequence`, and `Mapping` are generic types that correspond to **Python protocols** ([PEP 544](https://www.python.org/dev/peps/pep-0544/))
+  - e.g., a `str` object or a `List[str]` object is valid when `Iterable[str]` or `Sequence[str]` is expected
+  - note that even though they are similar to abstract base classes defined in [`collections.abc`](https://docs.python.org/3/library/collections.abc.html#module-collections.abc) (Python 3.8), they are not identical
+    - the built-in collection type objects do not support indexing
 
 ## Sources
 
