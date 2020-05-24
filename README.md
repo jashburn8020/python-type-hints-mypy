@@ -1,7 +1,5 @@
 # Python type hints using mypy
 
-- Based on Mypy documentation
-
 - [Python type hints using mypy](#python-type-hints-using-mypy)
   - [Introduction](#introduction)
   - [Getting started](#getting-started)
