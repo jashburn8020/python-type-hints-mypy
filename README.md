@@ -2,6 +2,26 @@
 
 - Based on Mypy documentation
 
+- [Python type hints using mypy](#python-type-hints-using-mypy)
+  - [Introduction](#introduction)
+  - [Getting started](#getting-started)
+    - [Function signatures and dynamic vs static typing](#function-signatures-and-dynamic-vs-static-typing)
+    - [More function signatures](#more-function-signatures)
+    - [The `typing` module](#the-typing-module)
+    - [Local type inference](#local-type-inference)
+    - [Library stubs and typeshed](#library-stubs-and-typeshed)
+    - [Configuring mypy](#configuring-mypy)
+  - [Using mypy with an existing codebase](#using-mypy-with-an-existing-codebase)
+    - [1. Start small](#1-start-small)
+    - [2. Mypy runner script](#2-mypy-runner-script)
+    - [3. Continuous Integration](#3-continuous-integration)
+    - [4. Annotate widely imported modules](#4-annotate-widely-imported-modules)
+    - [5. Write annotations as you go](#5-write-annotations-as-you-go)
+    - [6. Automate annotation of legacy code](#6-automate-annotation-of-legacy-code)
+    - [Speed up mypy runs](#speed-up-mypy-runs)
+    - [Introduce stricter options](#introduce-stricter-options)
+  - [Sources](#sources)
+
 ## Introduction
 
 - Mypy is a static type checker for Python 3 and Python 2.7
