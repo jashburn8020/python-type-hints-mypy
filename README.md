@@ -1,15 +1,15 @@
 # Python type hints using mypy
 
 - [Python type hints using mypy](#python-type-hints-using-mypy)
-  - [Introduction](#introduction)
-  - [Getting started](#getting-started)
+  - [1. Introduction](#1-introduction)
+  - [2. Getting started](#2-getting-started)
     - [Function signatures and dynamic vs static typing](#function-signatures-and-dynamic-vs-static-typing)
     - [More function signatures](#more-function-signatures)
     - [The `typing` module](#the-typing-module)
     - [Local type inference](#local-type-inference)
     - [Library stubs and typeshed](#library-stubs-and-typeshed)
     - [Configuring mypy](#configuring-mypy)
-  - [Using mypy with an existing codebase](#using-mypy-with-an-existing-codebase)
+  - [3. Using mypy with an existing codebase](#3-using-mypy-with-an-existing-codebase)
     - [1. Start small](#1-start-small)
     - [2. Mypy runner script](#2-mypy-runner-script)
     - [3. Continuous Integration](#3-continuous-integration)
@@ -18,16 +18,24 @@
     - [6. Automate annotation of legacy code](#6-automate-annotation-of-legacy-code)
     - [Speed up mypy runs](#speed-up-mypy-runs)
     - [Introduce stricter options](#introduce-stricter-options)
-  - [Built-in types](#built-in-types)
+  - [4. Built-in types](#4-built-in-types)
+  - [5. Type inference and type annotations](#5-type-inference-and-type-annotations)
+    - [Type inference](#type-inference)
+    - [Explicit types for variables](#explicit-types-for-variables)
+    - [Explicit types for collections](#explicit-types-for-collections)
+    - [Compatibility of container types](#compatibility-of-container-types)
+    - [Context in type inference](#context-in-type-inference)
+    - [Declaring multiple variable types at a time](#declaring-multiple-variable-types-at-a-time)
+    - [Starred expressions](#starred-expressions)
   - [Sources](#sources)
 
-## Introduction
+## 1. Introduction
 
 - Mypy is a static type checker for Python 3 and Python 2.7
 - Type annotations are just hints for mypy and don't interfere when running your program
 - You can annotate your code using the Python 3 function annotation syntax (using the [PEP 484](https://www.python.org/dev/peps/pep-0484) notation) or a comment-based annotation syntax for Python 2 code
 
-## Getting started
+## 2. Getting started
 
 - See [`getting_started.py`](ch02/getting_started.py)
 - See also [Type hints cheat sheet (Python 3)](https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html)
@@ -248,7 +256,7 @@ comment_typed_global_dict = {}  # type: Dict[int, float]
   - mostly useful if you're starting a new project from scratch
   - will probably be too aggressive if you either plan on using many untyped third party libraries or are trying to add static types to a large, existing codebase
 
-## Using mypy with an existing codebase
+## 3. Using mypy with an existing codebase
 
 ### 1. Start small
 
@@ -313,10 +321,10 @@ ignore_missing_imports = True
 
 - Once you get started with static typing, you may want to explore the various strictness options mypy provides to catch more bugs
 
-## Built-in types
+## 4. Built-in types
 
 - See:
-  - https://mypy.readthedocs.io/en/stable/builtin_types.html
+  - <https://mypy.readthedocs.io/en/stable/builtin_types.html>
   - [`typing`](https://docs.python.org/3/library/typing.html) module
 - The type `Dict` is a **generic class**, signified by type arguments within `[...]`
   - e.g., `Dict[int, str]` is a dictionary from integers to strings
@@ -326,6 +334,137 @@ ignore_missing_imports = True
   - e.g., a `str` object or a `List[str]` object is valid when `Iterable[str]` or `Sequence[str]` is expected
   - note that even though they are similar to abstract base classes defined in [`collections.abc`](https://docs.python.org/3/library/collections.abc.html#module-collections.abc) (Python 3.8), they are not identical
     - the built-in collection type objects do not support indexing
+
+## 5. Type inference and type annotations
+
+- See [`type_inference_type_annotations.py`](ch05/type_inference_type_annotations.py)
+
+### Type inference
+
+- Mypy considers the initial assignment as the definition of a variable
+- If you do not explicitly specify the type of the variable, mypy infers the type based on the static type of the value expression:
+
+```python
+i = 1           # Infer type "int" for i
+l = [1, 2]      # Infer type "List[int]" for l
+```
+
+- Type inference is not used in dynamically typed functions (those without a function type annotation)
+  - every local variable type defaults to `Any` in such functions
+
+### Explicit types for variables
+
+- You can override the inferred type of a variable by using a **variable type annotation**
+- Mypy checks that the type of the initializer is compatible with the declared type
+
+```python
+invalid_initializer: Union[int, str] = 1.1  # Error!
+```
+
+```console
+$ mypy --pretty --strict ch05/type_inference_type_annotations.py
+ch05/type_inference_type_annotations.py:4: error: Incompatible types in
+assignment (expression has type "float", variable has type "Union[int, str]")
+    invalid_initializer: Union[int, str] = 1.1
+                                           ^
+```
+
+- The variable annotation syntax is available starting from Python 3.6
+- In earlier Python versions, you can use a special comment after an assignment statement to declare the type of a variable:
+
+```python
+special_comment_type = 1  # type: Union[int, str]
+```
+
+- Variable annotation syntax allows defining the type of a variable without initialization:
+
+```python
+x: str
+```
+
+### Explicit types for collections
+
+- The type checker cannot always infer the type of a list or a dictionary
+  - often arises when creating an empty list or dictionary
+  - give the type explicitly using a type annotation
+
+```python
+empty_list: List[int] = []
+empty_dict: Dict[str, int] = {}
+empty_set: Set[int] = set()
+```
+
+### Compatibility of container types
+
+- The following program generates a mypy error since `List[int]` is not compatible with `List[object]`:
+  - allowing the assignment could result in non-`int` values stored in a list of `int`
+
+```python
+def incompatible_lists(object_list: List[object], int_list: List[int]) -> None:
+    """Incompatible container types."""
+    object_list = int_list
+```
+
+```console
+$ mypy --pretty --strict ch05/type_inference_type_annotations.py
+ch05/type_inference_type_annotations.py:20: error: Incompatible types in
+assignment (expression has type "List[int]", variable has type "List[object]")
+        object_list = int_list
+                      ^
+ch05/type_inference_type_annotations.py:20: note: "List" is invariant -- see http://mypy.readthedocs.io/en/latest/common_issues.html#variance
+ch05/type_inference_type_annotations.py:20: note: Consider using "Sequence" instead, which is covariant
+```
+
+- Other container types like `Dict` and `Set` behave similarly
+
+### Context in type inference
+
+- Type inference is bidirectional and takes context into account
+- In an assignment, the type context is determined by the assignment target
+
+```python
+def type_context_assignment_target(object_list: List[object]) -> None:
+    """Type context is determined by the assignment target."""
+    object_list = [1, 2]  # Infer type List[object] for [1, 2], not List[int]
+```
+
+- Declared argument types are also used for type context
+
+```python
+def declared_arg_type_context(int_list: List[int]) -> None:
+    """Declared argument types are used for type context."""
+    print("Items:", "".join(str(a) for a in int_list))
+
+
+declared_arg_type_context([])  # OK
+```
+
+### Declaring multiple variable types at a time
+
+- You can declare more than a single variable at a time, but only with a type comment
+
+```python
+multiple_vars_int, multiple_vars_bool = 0, False  # type: int, bool
+```
+
+### Starred expressions
+
+- Mypy can infer the type of starred expressions from the right-hand side of an assignment, but not always:
+
+```python
+int_1, *ints_a = 1, 2, 3  # OK
+int_2, int_3, *ints_b = 1, 2  # Error: Type of ints_b cannot be inferred
+```
+
+```console
+$ mypy --pretty --strict ch05/type_inference_type_annotations.py
+ch05/type_inference_type_annotations.py:40: error: Need type annotation for
+'ints_b' (hint: "ints_b: List[<type>] = ...")
+    int_2, int_3, *ints_b = 1, 2  # Error: Type of ints_b cannot be inferr...
+                   ^
+```
+
+- Mypy cannot infer the type of `ints_b`, because there is no right-hand side value for `ints_b` to infer the type from
 
 ## Sources
 
