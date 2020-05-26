@@ -27,6 +27,20 @@
     - [Context in type inference](#context-in-type-inference)
     - [Declaring multiple variable types at a time](#declaring-multiple-variable-types-at-a-time)
     - [Starred expressions](#starred-expressions)
+  - [6. Kinds of types](#6-kinds-of-types)
+    - [Class types](#class-types)
+    - [The `Any` type](#the-any-type)
+    - [`Tuple` types](#tuple-types)
+    - [`Callable` types (and lambdas)](#callable-types-and-lambdas)
+    - [`Union` types](#union-types)
+    - [`Optional` types and the `None` type](#optional-types-and-the-none-type)
+    - [Disabling strict optional checking](#disabling-strict-optional-checking)
+    - [Class name forward references](#class-name-forward-references)
+    - [Type aliases](#type-aliases)
+    - [Named tuples](#named-tuples)
+    - [The type of class objects](#the-type-of-class-objects)
+    - [`Text` and `AnyStr`](#text-and-anystr)
+    - [Generators](#generators)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -465,6 +479,411 @@ ch05/type_inference_type_annotations.py:40: error: Need type annotation for
 ```
 
 - Mypy cannot infer the type of `ints_b`, because there is no right-hand side value for `ints_b` to infer the type from
+
+## 6. Kinds of types
+
+- See [`kinds_of_types.py`](ch06/kinds_of_types.py)
+
+### Class types
+
+- Every class is also a valid type
+- Any instance of a subclass is also compatible with all superclasses
+  - every value is compatible with the `object` type
+- Mypy analyzes the bodies of classes to determine which methods and attributes are available in instances
+
+```python
+class SuperClass:
+    def method_a(self) -> int:  # Type of self inferred (SuperClass)
+        return 2
+
+
+class SubClass(SuperClass):
+    def method_a(self) -> int:
+        return 3
+
+    def method_b(self) -> int:
+        return 4
+
+
+def print_methods(clazz: SuperClass) -> None:
+    print(clazz.method_a())  # 3
+    clazz.method_b()  # Error: "SuperClass" has no attribute "method_b"
+
+
+print_methods(SubClass())  # OK (SubClass is a subclass of SuperClass)
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:16: error: "SuperClass" has no attribute "method_b";
+maybe "method_a"?
+        clazz.method_b()  # Error: "SuperClass" has no attribute "method_b"
+        ^
+```
+
+### The `Any` type
+
+- A value with the `Any` type is dynamically typed
+- `Any` is compatible with every other type, and vice versa
+- If you do not define a function return value or argument types, these default to `Any`
+
+### `Tuple` types
+
+```python
+def tuple_type(some_tuple: Tuple[int, str]) -> None:
+    """Fixed-length tuple."""
+    some_tuple = 1, "foo"  # OK
+    some_tuple = "foo", 1  # Type check error
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:28: error: Incompatible types in assignment (expression
+has type "Tuple[str, int]", variable has type "Tuple[int, str]")
+        some_tuple = "foo", 1  # Type check error
+                     ^
+```
+
+- A tuple type of this kind has exactly a specific number of items
+- Tuples can also be used as immutable, varying-length sequences
+  - use the type `Tuple[T, ...]` (with a literal `...`)
+
+```python
+def var_length_tuple(some_tuple: Tuple[int, ...]) -> None:
+    """Variable length tuple."""
+    for elem in some_tuple:
+        print(elem, elem ** 2)
+
+
+var_length_tuple(())  # OK
+var_length_tuple((1, 3, 5))  # OK
+var_length_tuple([1, 2])  # Error: only a tuple is valid
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:39: error: Argument 1 to "var_length_tuple" has
+incompatible type "List[int]"; expected "Tuple[int, ...]"
+    var_length_tuple([1, 2])  # Error: only a tuple is valid
+                     ^
+```
+
+- Note: Usually it's a better idea to use `Sequence[T]` instead of `Tuple[T, ...]`, as `Sequence` is also compatible with lists and other non-tuple sequences
+
+### `Callable` types (and lambdas)
+
+- You can pass around function objects and bound methods in statically typed code
+- The type of a function that accepts arguments `A1`, …, `An` and returns `Rt` is `Callable[[A1, ..., An], Rt]`
+
+```python
+def callable_type(num: int, a_callable: Callable[[int], int]) -> int:
+    """Callable type."""
+    return a_callable(a_callable(num))
+
+
+def some_callable(num: int) -> int:
+    return num + 1
+
+
+print(callable_type(3, some_callable))  # 5
+```
+
+- In callable types, you can only have positional arguments, and only ones without default values
+- Mypy recognizes a special form `Callable[..., T]` (with a literal `...`)
+  - compatible with arbitrary callable objects that return a type compatible with `T`
+    - independent of the number, types or kinds of arguments
+  - the arguments are treated similar to a `(*args: Any, **kwargs: Any)` function signature
+
+```python
+def arbitrary_call(arbitrary_args_callable: Callable[..., int]) -> int:
+    """Callable type with arbitrary arguments."""
+    return arbitrary_args_callable("x") + arbitrary_args_callable(y=2)
+
+
+arbitrary_call(ord)  # No static error, but fails at runtime
+arbitrary_call(open)  # Error: does not return an int
+arbitrary_call(1)  # Error: 'int' is not callable
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:60: error: Argument 1 to "arbitrary_call" has
+incompatible type
+"Callable[[Union[str, bytes, int, _PathLike[Any]], str, int, Optional[str], Optional[str], Optional[str], bool, Optional[Callable[[str, int], int]]], IO[Any]]";
+expected "Callable[..., int]"
+    arbitrary_call(open)  # Error: does not return an int
+                   ^
+ch06/kinds_of_types.py:61: error: Argument 1 to "arbitrary_call" has
+incompatible type "int"; expected "Callable[..., int]"
+    arbitrary_call(1)  # Error: 'int' is not callable
+                   ^
+```
+
+- In situations where more precise or complex types of callbacks are necessary one can use flexible callback protocols
+- **Lambdas** are also supported
+  - lambda argument and return value types cannot be given explicitly; they are always inferred based on context using bidirectional type inference
+- If you want to give the argument or return value types explicitly, use an ordinary, perhaps nested function definition
+
+```python
+# Infer x as int and some_iterator as Iterator[int]
+some_iterator = map(lambda x: x + 1, [1, 2, 3])
+```
+
+### `Union` types
+
+- Python functions often accept values of two or more different types
+- Use the `Union[T1, ..., Tn]` type constructor to construct a union type
+
+```python
+def union_type(arg: Union[int, str]) -> None:
+    """Union type."""
+    print(arg + 1)  # Error: str + int is not valid
+    if isinstance(arg, int):
+        print(arg + 1)  # OK
+    else:
+        print(arg + "a")  # OK
+
+
+union_type(1)  # OK
+union_type("x")  # OK
+union_type(1.1)  # Error
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:69: error: Unsupported operand types for + ("str" and
+"int")
+        print(arg + 1)  # Error: str + int is not valid
+                    ^
+ch06/kinds_of_types.py:69: note: Left operand is of type "Union[int, str]"
+ch06/kinds_of_types.py:78: error: Argument 1 to "union_type" has incompatible
+type "float"; expected "Union[int, str]"
+    union_type(1.1)  # Error
+               ^
+```
+
+### `Optional` types and the `None` type
+
+- You can use the `Optional` type modifier to define a type variant that allows `None`
+  - `Optional[X]` is the preferred shorthand for `Union[X, None]`
+- Mypy recognizes regular Python idioms to guard against `None` values
+  - `if x is None`
+  - `if x is not None`
+  - `if x`
+  - `if not x`
+
+```python
+def optional_arg_return(some_str: Optional[str]) -> Optional[int]:
+    """Optional type in argument and return value."""
+    if not some_str:
+        return None  # OK
+    # Mypy will infer the type of some_str to be str due to the check against None
+    return len(some_str)
+```
+
+- Sometimes mypy doesn't realize that a value is never `None`
+  - happens when a class instance can exist in a partially defined state
+    - some attribute is initialized to `None` during object construction
+    - a method assumes that the attribute is no longer `None`
+  - mypy will complain about the possible `None` value
+  - use `assert x is not None` to work around this
+
+```python
+class Resource:
+    """Mypy does not realize that if initialize() is called, self.path is never None."""
+
+    path: Optional[str] = None
+
+    def initialize(self, path: str) -> None:
+        self.path = path
+
+    def read(self) -> str:
+        # We require that the object has been initialized.
+        # assert self.path is not None
+        with open(self.path) as file_obj:  # OK if assert above is uncommented
+            return file_obj.read()
+
+
+resource = Resource()
+resource.initialize("/foo/bar")
+resource.read()
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:100: error: Argument 1 to "open" has incompatible type
+"Optional[str]"; expected "Union[str, bytes, int, _PathLike[Any]]"
+            with open(self.path) as file_obj:  # OK if assert above is unc...
+                      ^
+```
+
+- Mypy generally uses the first assignment to a variable to infer the type of the variable
+  - if you assign both a `None` value and a non-`None` value in the same scope, mypy can usually do the right thing without an annotation
+
+```python
+def same_scope_assignment(i: int) -> None:
+    """Type inference when further assignment is done in the same scope."""
+    num = None  # Inferred type Optional[int] because of the assignment below
+    if i > 0:
+        num = i
+
+    print(num)
+```
+
+### Disabling strict optional checking
+
+- Mypy has an option to treat `None` as a valid value for every type
+  - in case you don't want to introduce optional types to your codebase yet
+  - through the `--no-strict-optional` command line option
+  - in this mode `None` is also valid for primitive types such as `int` and `float`, and `Optional` types are not required
+  - it will cause mypy to silently accept some buggy code – not recommended
+- You can use the mypy configuration file to migrate your code to strict optional checking one file at a time
+  - using the per-module flag `strict_optional`
+
+### Class name forward references
+
+- Python does not allow references to a class object before the class is defined
+  - you can enter the type as a string literal - this is a _forward reference_
+  - string literal types must be defined (or imported) later in the _same module_
+
+```python
+def no_forward_reference(clazz: SomeClass) -> None:
+    """Python does not allow references to a class object before the class is defined.
+    """
+    pass
+
+
+def forward_reference(clazz: "SomeClass") -> None:
+    """Enter the type as a string literal - forward reference."""
+    pass
+
+
+class SomeClass:
+    """Class defined after references."""
+
+    pass
+```
+
+### Type aliases
+
+- Type names may end up being long and painful to type
+- You can define a type alias by simply assigning the type to a variable
+
+```python
+AliasType = Union[List[Dict[Tuple[int, str], Set[int]]], Tuple[str, List[str]]]
+
+# Now we can use AliasType in place of the full name:
+
+def f() -> AliasType:
+    ...
+```
+
+### Named tuples
+
+- Mypy recognizes named tuples and can type check code that defines or uses them
+- If you use `namedtuple` to define your named tuple, all the items are assumed to have `Any` types
+- You can use **`NamedTuple`** to define item types
+- Python 3.6 introduced an alternative, class-based syntax for named tuples with types
+
+```python
+# namedtuple - all the items are assumed to have Any types
+Point = namedtuple("Point", ["x", "y"])
+point = Point(x=1, y="two")
+
+# Use NamedTuple to also define item types
+TypedPoint = NamedTuple("TypedPoint", [("x", int), ("y", int)])
+# Argument has incompatible type "str"; expected "int"
+typed_point = TypedPoint(x=1, y="two")
+
+
+class ClassBasedPoint(NamedTuple):
+    """Class-based syntax for named tuples with types."""
+
+    x: int
+    y: int
+
+
+# # Argument has incompatible type "str"; expected "int"
+class_based_point = ClassBasedPoint(x=1, y="two")
+```
+
+```console
+$ mypy --pretty --strict ch06/kinds_of_types.py
+ch06/kinds_of_types.py:146: error: Argument "y" to "TypedPoint" has
+incompatible type "str"; expected "int"
+    typed_point = TypedPoint(x=1, y="two")
+                                    ^
+ch06/kinds_of_types.py:157: error: Argument "y" to "ClassBasedPoint" has
+incompatible type "str"; expected "int"
+    class_based_point = ClassBasedPoint(x=1, y="two")
+                                               ^
+```
+
+### The type of class objects
+
+- Note: **`Type`** is introduced in Python 3.8
+- Sometimes you want to talk about class objects that inherit from a given class
+- Can be spelled as `Type[C]` where `C` is a class
+  - using `C` to annotate an argument declares that the argument is an instance of `C` (or of a subclass of `C`)
+  - using `Type[C]` as an argument annotation declares that the argument is a class object deriving from `C` (or `C` itself)
+
+```python
+class User:
+    # Defines fields like name, email
+    pass
+
+
+class BasicUser(User):
+    def upgrade(self) -> None:
+        """Upgrade to Pro"""
+
+
+class ProUser(User):
+    def pay(self) -> None:
+        """Pay bill"""
+
+
+def new_user(user_class: type) -> User:
+    """The best we can do without Type."""
+    user = user_class()
+    # (Here we could write the user object to a database)
+    return user
+
+
+buyer = new_user(ProUser)
+buyer.pay()  # Rejected, not a method on User
+
+
+U = TypeVar("U", bound=User)
+
+
+def typed_new_user(user_class: Type[U]) -> U:
+    user = user_class()
+    # (Here we could write the user object to a database)
+    return user
+
+
+beginner = typed_new_user(BasicUser)  # Inferred type is BasicUser
+beginner.upgrade()  # OK
+```
+
+### `Text` and `AnyStr`
+
+- Note: **`Text`** and **`AnyStr`** are introduced in Python 3.8
+- You may want to write a function which will accept only unicode strings
+  - challenging to do in a codebase intended to run in both Python 2 and Python 3
+    - `str` means something different in both versions
+    - `unicode` is not a keyword in Python 3
+- Use `Text`, which is aliased to
+  - `unicode` in Python 2
+  - `str` in Python 3
+- Use **`AnyStr`**
+  - to write a function that will work with any kind of string but will not let you mix two different string types
+
+### Generators
+
+- Note: Type hints for generators are mostly introduced in Python 3.8
+  - see <https://mypy.readthedocs.io/en/stable/kinds_of_types.html#generators>
 
 ## Sources
 

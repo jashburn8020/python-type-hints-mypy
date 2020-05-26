@@ -1,7 +1,7 @@
-from typing import List, Iterable, Union, Optional, Dict
-
 """Getting Started
 https://mypy.readthedocs.io/en/stable/getting_started.html"""
+
+from typing import List, Iterable, Union, Optional, Dict
 
 
 def greeting_dynamic(name):

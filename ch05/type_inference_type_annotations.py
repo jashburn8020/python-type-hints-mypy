@@ -1,3 +1,6 @@
+"""Type inference and type annotations
+https://mypy.readthedocs.io/en/stable/type_inference_and_annotations.html"""
+
 from typing import Union, List, Dict, Set
 
 # Mypy checks that the type of the initializer is compatible with the declared type
