@@ -41,6 +41,12 @@
     - [The type of class objects](#the-type-of-class-objects)
     - [`Text` and `AnyStr`](#text-and-anystr)
     - [Generators](#generators)
+  - [7. Class basics](#7-class-basics)
+    - [Instance and class attributes](#instance-and-class-attributes)
+    - [Annotating `__init__` methods](#annotating-init-methods)
+    - [Class attribute annotations](#class-attribute-annotations)
+    - [Overriding statically typed methods](#overriding-statically-typed-methods)
+    - [Abstract base classes and multiple inheritance](#abstract-base-classes-and-multiple-inheritance)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -51,11 +57,11 @@
 
 ## 2. Getting started
 
-- See [`getting_started.py`](ch02/getting_started.py)
 - See also [Type hints cheat sheet (Python 3)](https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html)
 
 ### Function signatures and dynamic vs static typing
 
+- See [`function_signatures_dynamic_static.py`](ch02/function_signatures_dynamic_static.py)
 - A function without type annotations is considered to be dynamically typed by mypy
   - by default, mypy will not type check dynamically typed functions
   - you can check by using the `--strict` flag
@@ -70,12 +76,13 @@ greeting_dynamic("stranger")
 ```
 
 ```console
-$ mypy --pretty --strict ch02/getting_started.py
-ch02/getting_started.py:5: error: Function is missing a type annotation
+$ mypy --pretty --strict ch02/function_signatures_dynamic_static.py
+ch02/function_signatures_dynamic_static.py:4: error: Function is missing a type
+annotation
     def greeting_dynamic(name):
     ^
-ch02/getting_started.py:10: error: Call to untyped function "greeting_dynamic"
-in typed context
+ch02/function_signatures_dynamic_static.py:9: error: Call to untyped function
+"greeting_dynamic" in typed context
     greeting_dynamic("stranger")
     ^
 ```
@@ -94,9 +101,9 @@ greeting_typed(3)
 ```
 
 ```console
-$ mypy --pretty --strict ch02/getting_started.py
-ch02/getting_started.py:18: error: Argument 1 to "greeting_typed" has
-incompatible type "int"; expected "str"
+$ mypy --pretty --strict ch02/function_signatures_dynamic_static.py
+ch02/function_signatures_dynamic_static.py:17: error: Argument 1 to
+"greeting_typed" has incompatible type "int"; expected "str"
     greeting_typed(3)
                    ^
 ```
@@ -108,6 +115,7 @@ incompatible type "int"; expected "str"
 
 ### More function signatures
 
+- See [`more_function_signatures.py`](ch02/more_function_signatures.py)
 - If a function **does not explicitly return a value**, give it a return type of `None`
   - without the `None` return type, the function will be dynamically typed
 
@@ -121,8 +129,8 @@ some_value = no_return()
 ```
 
 ```console
-$ mypy --pretty --strict ch02/getting_started.py
-ch02/getting_started.py:26: error: "no_return" does not return a value
+$ mypy --pretty --strict ch02/more_function_signatures.py
+ch02/more_function_signatures.py:9: error: "no_return" does not return a value
     some_value = no_return()
                  ^
 ```
@@ -145,6 +153,7 @@ def args_and_kwargs(*args: int, **kwargs: float) -> None:
 
 ### The `typing` module
 
+- See [`the_typing_module.py`](ch02/the_typing_module.py)
 - You can find many of these more complex static types inside of the **`typing`** module
 
 ```python
@@ -162,16 +171,16 @@ complex_static_type(("Alice", "Bob", "Charlie"))
 ```
 
 ```console
-$ mypy --pretty --strict ch02/getting_started.py
-ch02/getting_started.py:56: error: List item 0 has incompatible type "int";
+$ mypy --pretty --strict ch02/the_typing_module.py
+ch02/the_typing_module.py:13: error: List item 0 has incompatible type "int";
 expected "str"
     complex_static_type([10, 20])
                          ^
-ch02/getting_started.py:56: error: List item 1 has incompatible type "int";
+ch02/the_typing_module.py:13: error: List item 1 has incompatible type "int";
 expected "str"
     complex_static_type([10, 20])
                              ^
-ch02/getting_started.py:57: error: Argument 1 to "complex_static_type" has
+ch02/the_typing_module.py:14: error: Argument 1 to "complex_static_type" has
 incompatible type "Tuple[str, str, str]"; expected "List[str]"
     complex_static_type(("Alice", "Bob", "Charlie"))
                          ^
@@ -225,6 +234,7 @@ def optional_type(name: Optional[str] = None) -> str:
 
 ### Local type inference
 
+- See [`local_type_inference.py`](ch02/local_type_inference.py)
 - Once you have added type hints to a function, mypy will
   - automatically type check that function's body
   - try and infer as many details as possible
@@ -235,8 +245,8 @@ untyped_global_dict = {}
 ```
 
 ```console
-$ mypy --pretty --strict ch02/getting_started.py
-ch02/getting_started.py:85: error: Need type annotation for
+$ mypy --pretty --strict ch02/local_type_inference.py
+ch02/local_type_inference.py:3: error: Need type annotation for
 'untyped_global_dict' (hint: "untyped_global_dict: Dict[<type>, <type>] = ...")
     untyped_global_dict = {}
     ^
@@ -346,12 +356,10 @@ ignore_missing_imports = True
 - `Dict` and `List` are aliases for the built-ins `dict` and `list`, respectively
 - `Iterable`, `Sequence`, and `Mapping` are generic types that correspond to **Python protocols** ([PEP 544](https://www.python.org/dev/peps/pep-0544/))
   - e.g., a `str` object or a `List[str]` object is valid when `Iterable[str]` or `Sequence[str]` is expected
-  - note that even though they are similar to abstract base classes defined in [`collections.abc`](https://docs.python.org/3/library/collections.abc.html#module-collections.abc) (Python 3.8), they are not identical
+  - note that even though they are similar to abstract base classes defined in [`collections.abc`](https://docs.python.org/3/library/collections.abc.html#module-collections.abc), they are not identical
     - the built-in collection type objects do not support indexing
 
 ## 5. Type inference and type annotations
-
-- See [`type_inference_type_annotations.py`](ch05/type_inference_type_annotations.py)
 
 ### Type inference
 
@@ -368,6 +376,7 @@ l = [1, 2]      # Infer type "List[int]" for l
 
 ### Explicit types for variables
 
+- See [`explicit_types_vars.py`](ch05/explicit_types_vars.py)
 - You can override the inferred type of a variable by using a **variable type annotation**
 - Mypy checks that the type of the initializer is compatible with the declared type
 
@@ -376,9 +385,9 @@ invalid_initializer: Union[int, str] = 1.1  # Error!
 ```
 
 ```console
-$ mypy --pretty --strict ch05/type_inference_type_annotations.py
-ch05/type_inference_type_annotations.py:4: error: Incompatible types in
-assignment (expression has type "float", variable has type "Union[int, str]")
+$ mypy --pretty --strict ch05/explicit_types_vars.py
+ch05/explicit_types_vars.py:6: error: Incompatible types in assignment
+(expression has type "float", variable has type "Union[int, str]")
     invalid_initializer: Union[int, str] = 1.1
                                            ^
 ```
@@ -398,6 +407,7 @@ x: str
 
 ### Explicit types for collections
 
+- See [`explicit_types_collections.py`](ch05/explicit_types_collections.py)
 - The type checker cannot always infer the type of a list or a dictionary
   - often arises when creating an empty list or dictionary
   - give the type explicitly using a type annotation
@@ -410,6 +420,7 @@ empty_set: Set[int] = set()
 
 ### Compatibility of container types
 
+- See [`compatibility_container_types.py`](ch05/compatibility_container_types.py)
 - The following program generates a mypy error since `List[int]` is not compatible with `List[object]`:
   - allowing the assignment could result in non-`int` values stored in a list of `int`
 
@@ -420,19 +431,20 @@ def incompatible_lists(object_list: List[object], int_list: List[int]) -> None:
 ```
 
 ```console
-$ mypy --pretty --strict ch05/type_inference_type_annotations.py
-ch05/type_inference_type_annotations.py:20: error: Incompatible types in
+$ mypy --pretty --strict ch05/compatibility_container_types.py
+ch05/compatibility_container_types.py:8: error: Incompatible types in
 assignment (expression has type "List[int]", variable has type "List[object]")
         object_list = int_list
                       ^
-ch05/type_inference_type_annotations.py:20: note: "List" is invariant -- see http://mypy.readthedocs.io/en/latest/common_issues.html#variance
-ch05/type_inference_type_annotations.py:20: note: Consider using "Sequence" instead, which is covariant
+ch05/compatibility_container_types.py:8: note: "List" is invariant -- see http://mypy.readthedocs.io/en/latest/common_issues.html#variance
+ch05/compatibility_container_types.py:8: note: Consider using "Sequence" instead, which is covariant
 ```
 
 - Other container types like `Dict` and `Set` behave similarly
 
 ### Context in type inference
 
+- See [`context_type_inference.py`](ch05/context_type_inference.py)
 - Type inference is bidirectional and takes context into account
 - In an assignment, the type context is determined by the assignment target
 
@@ -455,6 +467,7 @@ declared_arg_type_context([])  # OK
 
 ### Declaring multiple variable types at a time
 
+- See [`declaring_multiple_var_types.py`](ch05/declaring_multiple_var_types.py)
 - You can declare more than a single variable at a time, but only with a type comment
 
 ```python
@@ -463,6 +476,7 @@ multiple_vars_int, multiple_vars_bool = 0, False  # type: int, bool
 
 ### Starred expressions
 
+- See [`starred_expressions.py`](ch05/starred_expressions.py)
 - Mypy can infer the type of starred expressions from the right-hand side of an assignment, but not always:
 
 ```python
@@ -471,9 +485,9 @@ int_2, int_3, *ints_b = 1, 2  # Error: Type of ints_b cannot be inferred
 ```
 
 ```console
-$ mypy --pretty --strict ch05/type_inference_type_annotations.py
-ch05/type_inference_type_annotations.py:40: error: Need type annotation for
-'ints_b' (hint: "ints_b: List[<type>] = ...")
+$ mypy --pretty --strict ch05/starred_expressions.py
+ch05/starred_expressions.py:5: error: Need type annotation for 'ints_b' (hint:
+"ints_b: List[<type>] = ...")
     int_2, int_3, *ints_b = 1, 2  # Error: Type of ints_b cannot be inferr...
                    ^
 ```
@@ -482,10 +496,9 @@ ch05/type_inference_type_annotations.py:40: error: Need type annotation for
 
 ## 6. Kinds of types
 
-- See [`kinds_of_types.py`](ch06/kinds_of_types.py)
-
 ### Class types
 
+- See [`class_types.py`](ch06/class_types.py)
 - Every class is also a valid type
 - Any instance of a subclass is also compatible with all superclasses
   - every value is compatible with the `object` type
@@ -514,10 +527,10 @@ print_methods(SubClass())  # OK (SubClass is a subclass of SuperClass)
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:16: error: "SuperClass" has no attribute "method_b";
-maybe "method_a"?
-        clazz.method_b()  # Error: "SuperClass" has no attribute "method_b"
+$ mypy --pretty --strict ch06/class_types.py
+ch06/class_types.py:19: error: "SuperClass" has no attribute "method_b"; maybe
+"method_a"?
+        clazz.method_b()  # Error: "SuperClass" has no attribute "method_b...
         ^
 ```
 
@@ -529,6 +542,8 @@ maybe "method_a"?
 
 ### `Tuple` types
 
+- See [`tuple_types.py`](ch06/tuple_types.py)
+
 ```python
 def tuple_type(some_tuple: Tuple[int, str]) -> None:
     """Fixed-length tuple."""
@@ -537,9 +552,9 @@ def tuple_type(some_tuple: Tuple[int, str]) -> None:
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:28: error: Incompatible types in assignment (expression
-has type "Tuple[str, int]", variable has type "Tuple[int, str]")
+$ mypy --pretty --strict ch06/tuple_types.py
+ch06/tuple_types.py:9: error: Incompatible types in assignment (expression has
+type "Tuple[str, int]", variable has type "Tuple[int, str]")
         some_tuple = "foo", 1  # Type check error
                      ^
 ```
@@ -561,8 +576,8 @@ var_length_tuple([1, 2])  # Error: only a tuple is valid
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:39: error: Argument 1 to "var_length_tuple" has
+$ mypy --pretty --strict ch06/tuple_types.py
+ch06/tuple_types.py:20: error: Argument 1 to "var_length_tuple" has
 incompatible type "List[int]"; expected "Tuple[int, ...]"
     var_length_tuple([1, 2])  # Error: only a tuple is valid
                      ^
@@ -572,6 +587,7 @@ incompatible type "List[int]"; expected "Tuple[int, ...]"
 
 ### `Callable` types (and lambdas)
 
+- See [`callable_types_lambdas.py`](ch06/callable_types_lambdas.py)
 - You can pass around function objects and bound methods in statically typed code
 - The type of a function that accepts arguments `A1`, …, `An` and returns `Rt` is `Callable[[A1, ..., An], Rt]`
 
@@ -606,14 +622,14 @@ arbitrary_call(1)  # Error: 'int' is not callable
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:60: error: Argument 1 to "arbitrary_call" has
+$ mypy --pretty --strict ch06/callable_types_lambdas.py
+ch06/callable_types_lambdas.py:24: error: Argument 1 to "arbitrary_call" has
 incompatible type
 "Callable[[Union[str, bytes, int, _PathLike[Any]], str, int, Optional[str], Optional[str], Optional[str], bool, Optional[Callable[[str, int], int]]], IO[Any]]";
 expected "Callable[..., int]"
     arbitrary_call(open)  # Error: does not return an int
                    ^
-ch06/kinds_of_types.py:61: error: Argument 1 to "arbitrary_call" has
+ch06/callable_types_lambdas.py:25: error: Argument 1 to "arbitrary_call" has
 incompatible type "int"; expected "Callable[..., int]"
     arbitrary_call(1)  # Error: 'int' is not callable
                    ^
@@ -631,6 +647,7 @@ some_iterator = map(lambda x: x + 1, [1, 2, 3])
 
 ### `Union` types
 
+- See [`union_types.py`](ch06/union_types.py)
 - Python functions often accept values of two or more different types
 - Use the `Union[T1, ..., Tn]` type constructor to construct a union type
 
@@ -650,20 +667,20 @@ union_type(1.1)  # Error
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:69: error: Unsupported operand types for + ("str" and
-"int")
+$ mypy --pretty --strict ch06/union_types.py
+ch06/union_types.py:8: error: Unsupported operand types for + ("str" and "int")
         print(arg + 1)  # Error: str + int is not valid
                     ^
-ch06/kinds_of_types.py:69: note: Left operand is of type "Union[int, str]"
-ch06/kinds_of_types.py:78: error: Argument 1 to "union_type" has incompatible
-type "float"; expected "Union[int, str]"
+ch06/union_types.py:8: note: Left operand is of type "Union[int, str]"
+ch06/union_types.py:17: error: Argument 1 to "union_type" has incompatible type
+"float"; expected "Union[int, str]"
     union_type(1.1)  # Error
                ^
 ```
 
 ### `Optional` types and the `None` type
 
+- See [`optional_none_types.py`](ch06/optional_none_types.py)
 - You can use the `Optional` type modifier to define a type variant that allows `None`
   - `Optional[X]` is the preferred shorthand for `Union[X, None]`
 - Mypy recognizes regular Python idioms to guard against `None` values
@@ -710,9 +727,9 @@ resource.read()
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:100: error: Argument 1 to "open" has incompatible type
-"Optional[str]"; expected "Union[str, bytes, int, _PathLike[Any]]"
+$ mypy --pretty --strict ch06/optional_none_types.py
+ch06/optional_none_types.py:24: error: Argument 1 to "open" has incompatible
+type "Optional[str]"; expected "Union[str, bytes, int, _PathLike[Any]]"
             with open(self.path) as file_obj:  # OK if assert above is unc...
                       ^
 ```
@@ -742,6 +759,7 @@ def same_scope_assignment(i: int) -> None:
 
 ### Class name forward references
 
+- See [`class_name_forward_refs.py`](ch06/class_name_forward_refs.py)
 - Python does not allow references to a class object before the class is defined
   - you can enter the type as a string literal - this is a _forward reference_
   - string literal types must be defined (or imported) later in the _same module_
@@ -750,18 +768,14 @@ def same_scope_assignment(i: int) -> None:
 def no_forward_reference(clazz: SomeClass) -> None:
     """Python does not allow references to a class object before the class is defined.
     """
-    pass
 
 
 def forward_reference(clazz: "SomeClass") -> None:
     """Enter the type as a string literal - forward reference."""
-    pass
 
 
 class SomeClass:
     """Class defined after references."""
-
-    pass
 ```
 
 ### Type aliases
@@ -780,6 +794,7 @@ def f() -> AliasType:
 
 ### Named tuples
 
+- See [`named_tuples.py`](ch06/named_tuples.py)
 - Mypy recognizes named tuples and can type check code that defines or uses them
 - If you use `namedtuple` to define your named tuple, all the items are assumed to have `Any` types
 - You can use **`NamedTuple`** to define item types
@@ -808,12 +823,12 @@ class_based_point = ClassBasedPoint(x=1, y="two")
 ```
 
 ```console
-$ mypy --pretty --strict ch06/kinds_of_types.py
-ch06/kinds_of_types.py:146: error: Argument "y" to "TypedPoint" has
-incompatible type "str"; expected "int"
+$ mypy --pretty --strict ch06/named_tuples.py
+ch06/named_tuples.py:13: error: Argument "y" to "TypedPoint" has incompatible
+type "str"; expected "int"
     typed_point = TypedPoint(x=1, y="two")
                                     ^
-ch06/kinds_of_types.py:157: error: Argument "y" to "ClassBasedPoint" has
+ch06/named_tuples.py:24: error: Argument "y" to "ClassBasedPoint" has
 incompatible type "str"; expected "int"
     class_based_point = ClassBasedPoint(x=1, y="two")
                                                ^
@@ -821,7 +836,7 @@ incompatible type "str"; expected "int"
 
 ### The type of class objects
 
-- Note: **`Type`** is introduced in Python 3.8
+- See [`type_of_class_objects.py`](ch06/type_of_class_objects.py)
 - Sometimes you want to talk about class objects that inherit from a given class
 - Can be spelled as `Type[C]` where `C` is a class
   - using `C` to annotate an argument declares that the argument is an instance of `C` (or of a subclass of `C`)
@@ -867,9 +882,20 @@ beginner = typed_new_user(BasicUser)  # Inferred type is BasicUser
 beginner.upgrade()  # OK
 ```
 
+```console
+$ mypy --pretty --strict ch06/type_of_class_objects.py
+ch06/type_of_class_objects.py:25: error: Returning Any from function declared
+to return "User"
+        return user
+        ^
+ch06/type_of_class_objects.py:29: error: "User" has no attribute "pay"
+    buyer.pay()  # Rejected, not a method on User
+    ^
+```
+
 ### `Text` and `AnyStr`
 
-- Note: **`Text`** and **`AnyStr`** are introduced in Python 3.8
+- See [`text_and_anystr.py`](ch06/text_and_anystr.py)
 - You may want to write a function which will accept only unicode strings
   - challenging to do in a codebase intended to run in both Python 2 and Python 3
     - `str` means something different in both versions
@@ -880,10 +906,307 @@ beginner.upgrade()  # OK
 - Use **`AnyStr`**
   - to write a function that will work with any kind of string but will not let you mix two different string types
 
+```python
+def unicode_only(unicode_str: Text) -> Text:
+    """Accept only unicode strings in a cross-compatible way."""
+    return unicode_str + u"\u2713"
+
+
+def concat(str1: AnyStr, str2: AnyStr) -> AnyStr:
+    """Works with any kind of strings, but not mix different types."""
+    return str1 + str2
+
+
+concat("a", "b")  # Okay
+concat(b"a", b"b")  # Okay
+concat("a", b"b")  # Error: cannot mix bytes and unicode
+```
+
+```console
+$ mypy --pretty --strict ch06/text_and_anystr.py
+ch06/text_and_anystr.py:18: error: Value of type variable "AnyStr" of "concat"
+cannot be "object"
+    concat("a", b"b")  # Error: cannot mix bytes and unicode
+    ^
+```
+
 ### Generators
 
-- Note: Type hints for generators are mostly introduced in Python 3.8
-  - see <https://mypy.readthedocs.io/en/stable/kinds_of_types.html#generators>
+- See [`generators.py`](ch06/generators.py)
+- A basic generator that only yields values can be annotated as having a return type of either `Iterator[YieldType]` or `Iterable[YieldType]`
+
+```python
+def squares(num: int) -> Iterator[int]:
+    """Basic generator that only yields values."""
+    for i in range(num):
+        yield i * i
+```
+
+- If you want your generator to accept values via the `send()` method or return a value
+  - use the `Generator[YieldType, SendType, ReturnType]` generic type
+  - note that unlike many other generics in the typing module, the `SendType` of `Generator` behaves contravariantly, not covariantly or invariantly
+
+```python
+def echo_round() -> Generator[int, float, str]:
+    """Generator to accept values via the `send()` method or return a value."""
+    sent = yield 0
+    while sent >= 0:
+        sent = yield round(sent)
+    return "Done"
+```
+
+- If you do not plan on receiving or returning values, then set the `SendType` or `ReturnType` to `None`, as appropriate
+  - slightly different from using `Iterable[int]` or `Iterator[int]`, since generators have `close()`, `send()`, and `throw()` methods that generic iterables don't
+  - if you will call these methods on the returned generator, use the `Generator` type instead of `Iterable` or `Iterator`
+
+## 7. Class basics
+
+### Instance and class attributes
+
+- See [`instance_class_attrs.py`](ch07/instance_class_attrs.py)
+- Mypy detects if you are trying to access a missing attribute
+  - mypy infers the types of attributes
+
+```python
+class SingleAttribute:
+    """Class with a single `present` attribute."""
+
+    def __init__(self, present: int) -> None:
+        self.present = present  # inferred attribute of type 'int'
+
+
+single = SingleAttribute(1)
+single.present = 2  # OK
+single.absent = 3  # Error
+```
+
+```console
+$ mypy --pretty --strict ch07/instance_class_attrs.py
+ch07/instance_class_attrs.py:15: error: "SingleAttribute" has no attribute
+"absent"
+    single.absent = 3  # Error
+    ^
+```
+
+- You can declare types of variables in the class body explicitly using a type annotation
+  - as in Python generally, a variable defined in the class body can be used as a class or an instance variable
+
+```python
+class DeclaredAttribute:
+    """Class with declared attribute."""
+
+    attr: List[int]  # Declare attribute 'x' of type List[int]
+
+
+declared = DeclaredAttribute()
+declared.attr = [1]  # OK
+```
+
+- You can give explicit types to instance variables defined in a method
+
+```python
+class InstanceVarDefinedInMethod:
+    """Explicit types to instance variables defined in a method."""
+
+    def __init__(self) -> None:
+        self.x: List[int] = []
+
+    def some_func(self) -> None:
+        self.y: Any = 0
+```
+
+### Annotating `__init__` methods
+
+- See [`annotating_init_methods.py`](ch07/annotating_init_methods.py)
+- The `__init__` method doesn't return a value
+  - best expressed as `-> None`
+  - it is allowed to omit the return type declaration if at least one argument is annotated
+  - in the following classes, `__init__` is considered fully annotated
+
+```python
+class InitNoneReturn:
+    """`__init__` `None` return type declared."""
+
+    def __init__(self) -> None:
+        self.var = 42
+
+
+class InitNoNoneReturn:
+    """`__init__` return type not declared, but argument is annotated."""
+
+    def __init__(self, arg: int):
+        self.var = arg
+```
+
+- If `__init__` has no annotated arguments and no return type annotation, it is considered an untyped method
+
+### Class attribute annotations
+
+- See [`class_attr_annotations.py`](ch07/class_attr_annotations.py)
+- You can use a `ClassVar[t]` annotation to explicitly declare that a particular attribute should not be set on instances
+- It's not necessary to annotate all class variables using `ClassVar`
+  - an attribute without the `ClassVar` annotation can still be used as a class variable
+  - mypy won't prevent it from being used as an instance variable
+- Note: A `ClassVar` type parameter cannot include type variables
+  - `ClassVar[T]` and `ClassVar[List[T]]` are both invalid if `T` is a type variable
+
+```python
+class ClassVariable:
+    """`ClassVar` annotation."""
+
+    var: ClassVar[int] = 0  # Class variable only
+
+
+ClassVariable.var += 1  # OK
+
+class_var = ClassVariable()
+class_var.var = 1  # Error
+print(class_var.var)  # OK -- can be read through an instance
+```
+
+```console
+$ mypy --pretty --strict ch07/class_attr_annotations.py
+ch07/class_attr_annotations.py:15: error: Cannot assign to class variable "var"
+via instance
+    class_var.var = 1  # Error
+    ^
+```
+
+### Overriding statically typed methods
+
+- See [`overriding_methods.py`](ch07/overriding_methods.py)
+- When overriding a statically typed method, mypy checks that the override has a compatible signature
+
+```python
+class Base:
+    def some_func(self, x: int) -> None:
+        pass
+
+
+class Derived1(Base):
+    def some_func(self, x: str) -> None:  # Error: type of 'x' incompatible
+        pass
+
+
+class Derived2(Base):
+    def some_func(self, x: int, y: int) -> None:  # Error: too many arguments
+        pass
+
+
+class Derived3(Base):
+    def some_func(self, x: int) -> None:  # OK
+        pass
+
+
+class Derived4(Base):
+    def some_func(self, x: float) -> None:  # OK: mypy treats int as a subtype of float
+        pass
+
+
+class Derived5(Base):
+    def some_func(self, x: int, y: int = 0) -> None:  # OK: accepts more than the base
+        pass  #     class method
+```
+
+```console
+$ mypy --pretty --strict ch07/overriding_methods.py
+ch07/overriding_methods.py:10: error: Argument 1 of "some_func" is incompatible
+with supertype "Base"; supertype defines the argument type as "int"
+        def some_func(self, x: str) -> None:  # Error: type of 'x' incompa...
+        ^
+ch07/overriding_methods.py:15: error: Signature of "some_func" incompatible
+with supertype "Base"
+        def some_func(self, x: int, y: int) -> None:  # Error: too many ar...
+        ^
+```
+
+- You can vary return types _covariantly_ in overriding
+  - you could override the return type `Iterable[int]` with a subtype such as `List[int]`
+- You can vary argument types _contravariantly_
+  - subclasses can have more general argument types
+- You can override a statically typed method with a dynamically typed one
+  - allows dynamically typed code to override methods defined in library classes without worrying about their type signatures
+
+```python
+class StaticBase:
+    def inc(self, x: int) -> int:
+        return x + 1
+
+
+class DynamicDerived(StaticBase):
+    def inc(self, x):  # Override, dynamically typed
+        return "hello"  # Incompatible with 'StaticBase', but no mypy error
+```
+
+### Abstract base classes and multiple inheritance
+
+- See [`abstract_base_class_multiple_inheritance.py`](ch07/abstract_base_class_multiple_inheritance.py)
+- Mypy supports Python [abstract base classes](https://docs.python.org/3/library/abc.html) (ABCs)
+  - abstract classes have at least one abstract method or property that must be implemented by any concrete (non-abstract) subclass
+  - you can define abstract base classes using the `abc.ABCMeta` metaclass and the `@abc.abstractmethod` function decorator
+
+```python
+class Animal(metaclass=ABCMeta):
+    @abstractmethod
+    def eat(self, food: str) -> None:
+        pass
+
+    @property
+    @abstractmethod
+    def can_walk(self) -> bool:
+        pass
+
+
+class Cat(Animal):
+    def eat(self, food: str) -> None:
+        pass  # Body omitted
+
+    @property
+    def can_walk(self) -> bool:
+        return True
+
+
+x = Animal()  # Error: 'Animal' is abstract due to 'eat' and 'can_walk'
+y = Cat()  # OK
+```
+
+```console
+$ mypy --pretty --strict ch07/abstract_base_class_multiple_inheritance.py
+ch07/abstract_base_class_multiple_inheritance.py:26: error: Cannot instantiate
+abstract class 'Animal' with abstract attributes 'can_walk' and 'eat'
+    x = Animal()  # Error: 'Animal' is abstract due to 'eat' and 'can_walk...
+        ^
+```
+
+- Since you can't create instances of ABCs, they are most commonly used in type annotations
+- Whether a particular class is abstract or not is somewhat implicit
+  - in the example below, `Derived` is treated as an abstract base class
+    - `Derived` inherits an abstract `base_method` method from `Base` and doesn't explicitly implement it
+  - the definition of `Derived` generates no errors from mypy, since it's a valid ABC
+  - attempting to create an instance of `Derived` will be rejected
+
+```python
+class Base(metaclass=ABCMeta):
+    @abstractmethod
+    def base_method(self, x: int) -> None:
+        pass
+
+
+class Derived(Base):  # No error -- Derived is implicitly abstract
+    def derived_method(self) -> None:
+        pass
+
+
+d = Derived()  # Error: 'Derived' is abstract
+```
+
+```console
+$ mypy --pretty --strict ch07/abstract_base_class_multiple_inheritance.py
+ch07/abstract_base_class_multiple_inheritance.py:41: error: Cannot instantiate
+abstract class 'Derived' with abstract attribute 'base_method'
+    d = Derived()  # Error: 'Derived' is abstract
+        ^
+```
 
 ## Sources
 
