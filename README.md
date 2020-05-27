@@ -57,6 +57,7 @@
   - [10. Dynamically typed code](#10-dynamically-typed-code)
     - [Operations on `Any` values](#operations-on-any-values)
     - [`Any` vs. `object`](#any-vs-object)
+  - [11. Casts and type assertions](#11-casts-and-type-assertions)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -1553,6 +1554,46 @@ def f(x: Any) -> None:
 - Unlike `Any`, `object` is an ordinary static type, and only operations valid for all types are accepted for `object` values
 - You can use `cast()` or `isinstance()` to go from a general type such as `object` to a more specific type (subtype) such as `int`
   - `cast()` is not needed with dynamically typed values (values with type `Any`)
+
+## 11. Casts and type assertions
+
+- See [`casts_type_assertions.py`](ch11/casts_type_assertions.py)
+- Mypy supports type casts that are usually used to coerce a statically typed value to a subtype
+- Mypy casts are only used as hints for the type checker, and they don't perform a runtime type check
+- Use the function **`cast()`** to perform a cast
+
+```python
+o: object = [1]
+x = cast(List[int], o)  # OK
+y = cast(List[str], o)  # OK (cast performs no actual runtime check)
+```
+
+- Casts are used to silence spurious type checker warnings and give the type checker a little help when it can't quite understand what is going on
+- You can use an assertion if you want to perform an actual runtime check
+
+```python
+def foo(o: object) -> None:
+    print(o + 5)  # Error: can't add 'object' and 'int'
+    assert isinstance(o, int)
+    print(o + 5)  # OK: type of 'o' is 'int' here
+```
+
+- You don't need a cast for expressions with type `Any`, or when assigning to a variable with type `Any`
+- You can also use `Any` as the cast target type - this lets you perform any operations on the result
+
+```python
+x_str = 1
+x_str.whatever()  # Type check error
+y_any = cast(Any, x_str)
+y_any.whatever()  # Type check OK (runtime error)
+```
+
+```console
+$ mypy --pretty --strict ch11/casts_type_assertions.py
+ch11/casts_type_assertions.py:17: error: "int" has no attribute "whatever"
+    x_str.whatever()  # Type check error
+    ^
+```
 
 ## Sources
 
