@@ -59,6 +59,9 @@
     - [`Any` vs. `object`](#any-vs-object)
   - [11. Casts and type assertions](#11-casts-and-type-assertions)
   - [12. Duck type compatibility](#12-duck-type-compatibility)
+  - [13. Creating a stub](#13-creating-a-stub)
+    - [Stub file syntax](#stub-file-syntax)
+    - [Using stub file syntax at runtime](#using-stub-file-syntax-at-runtime)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -1614,6 +1617,69 @@ print(degrees_to_radians(n))  # Okay!
 ```
 
 - You can also often use protocols and structural subtyping to achieve a similar effect in a more principled and extensible fashion
+
+## 13. Creating a stub
+
+- How to create a stub file:
+  - write a stub file for the library (or an arbitrary module) and store it as a `.pyi` file in the same directory as the library module
+  - alternatively, put your stubs (`.pyi` files) in a directory reserved for stubs (e.g., `myproject/stubs`)
+    - set the environment variable `MYPYPATH` to refer to the directory
+- Use the normal Python file name conventions for **modules**, e.g. `csv.pyi` for module `csv`
+- Use a subdirectory with `__init__.pyi` for **packages**
+  - note that [PEP 561](https://www.python.org/dev/peps/pep-0561) stub-only packages must be installed, and may not be pointed at through the `MYPYPATH`
+- If a directory contains both a `.py` and a `.pyi` file for the same module, the `.pyi` file takes precedence
+  - you can add annotations for a module even if you don't want to modify the source code
+  - useful if you use 3rd party open source libraries in your program (and there are no stubs in typeshed yet)
+
+### Stub file syntax
+
+- Stub files are written in normal Python 3 syntax
+  - leaving out runtime logic like variable initializers, function bodies, and default arguments
+  - if not possible to completely leave out some piece of runtime logic, replace or elide them with ellipsis expressions (`...`)
+
+```python
+# Variables with annotations do not need to be assigned a value.
+# So by convention, we omit them in the stub file.
+x: int
+
+# Function bodies cannot be completely removed. By convention,
+# we replace them with `...` instead of the `pass` statement.
+def func_1(code: str) -> int: ...
+
+# We can do the same with default arguments.
+def func_2(a: int, b: int = ...) -> int: ...
+```
+
+### Using stub file syntax at runtime
+
+- You may also elide actual logic in regular Python code – for example, when writing methods in overload variants or custom protocols
+  - use ellipses to do so, just like in stub files
+  - stylistically acceptable to throw a `NotImplementedError` in cases where the user of the code may accidentally call functions with no actual logic
+- You can also elide default arguments as long as the function body also contains no runtime logic:
+  - the function body only contains a single ellipsis
+  - the `pass` statement
+  - or a raise `NotImplementedError()`
+  - acceptable for the function body to contain a docstring
+
+```python
+from typing import List
+from typing_extensions import Protocol
+
+class Resource(Protocol):
+    def ok_1(self, foo: List[str] = ...) -> None: ...
+
+    def ok_2(self, foo: List[str] = ...) -> None:
+        raise NotImplementedError()
+
+    def ok_3(self, foo: List[str] = ...) -> None:
+        """Some docstring"""
+        pass
+
+    # Error: Incompatible default for argument "foo" (default has
+    # type "ellipsis", argument has type "List[str]")
+    def not_ok(self, foo: List[str] = ...) -> None:
+        print(foo)
+```
 
 ## Sources
 
