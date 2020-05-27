@@ -47,6 +47,13 @@
     - [Class attribute annotations](#class-attribute-annotations)
     - [Overriding statically typed methods](#overriding-statically-typed-methods)
     - [Abstract base classes and multiple inheritance](#abstract-base-classes-and-multiple-inheritance)
+  - [8. Protocols and structural subtyping](#8-protocols-and-structural-subtyping)
+    - [Predefined protocols](#predefined-protocols)
+    - [Simple user-defined protocols](#simple-user-defined-protocols)
+    - [Defining subprotocols and subclassing protocols](#defining-subprotocols-and-subclassing-protocols)
+    - [Recursive protocols](#recursive-protocols)
+    - [Using isinstance() with protocols](#using-isinstance-with-protocols)
+    - [Callback protocols](#callback-protocols)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -1206,6 +1213,300 @@ ch07/abstract_base_class_multiple_inheritance.py:41: error: Cannot instantiate
 abstract class 'Derived' with abstract attribute 'base_method'
     d = Derived()  # Error: 'Derived' is abstract
         ^
+```
+
+## 8. Protocols and structural subtyping
+
+- Mypy supports two ways of deciding whether two classes are compatible as types
+  - **nominal subtyping** is strictly based on the class hierarchy
+    - if class `D` inherits class `C`, it's also a subtype of `C`
+    - instances of `D` can be used when `C` instances are expected
+  - **structural subtyping**
+    - class `D` is a structural subtype of class `C` if `D` has all attributes and methods of `C`, and with compatible types
+    - can be seen as a static equivalent of duck typing
+    - Mypy provides support for structural subtyping via **protocol classes**
+    - see [PEP 544](https://www.python.org/dev/peps/pep-0544/) for the detailed specification of protocols and structural subtyping
+
+### Predefined protocols
+
+- The `typing` module defines various protocol classes that correspond to common Python protocols, such as `Iterable[T]`
+- If a class defines a suitable `__iter__` method, mypy understands that it implements the iterable protocol and is compatible with `Iterable[T]`
+
+```python
+class IntList:
+    def __init__(self, value: int, next: Optional["IntList"]) -> None:
+        self.value = value
+        self.next = next
+
+    def __iter__(self) -> Iterator[int]:
+        current: Optional[IntList] = self
+        while current:
+            yield current.value
+            current = current.next
+
+
+def print_numbered(items: Iterable[int]) -> None:
+    for n, x in enumerate(items):
+        print(n + 1, x)
+
+
+x = IntList(3, IntList(5, None))
+print_numbered(x)  # OK
+print_numbered([4, 5])  # Also OK
+```
+
+- See <https://mypy.readthedocs.io/en/stable/protocols.html#predefined-protocols> for all built-in protocols defined in `typing` and the signatures of the corresponding methods you need to define to implement each protocol
+- Iteration protocols
+  - e.g., they allow iteration of objects in `for` loops
+  - `Iterable[T]`
+  - `Iterator[T]`
+- Collection protocols
+  - many of these are implemented by built-in container types such as `list` and `dict`, and these are also useful for user-defined collection objects
+  - `Sized`
+    - type for objects that support `len(x)`
+  - `Container[T]`
+    - type for objects that support the `in` operator
+  - `Collection[T]`
+- One-off protocols
+  - these protocols are typically only useful with a single standard library function or class
+  - `Reversible[T]`
+    - type for objects that support `reversed(x)`
+  - `SupportsAbs[T]`
+    - type for objects that support `abs(x)`, which returns a value of type `T`
+  - `SupportsBytes`
+    - type for objects that support `bytes(x)`
+  - `SupportsComplex`
+    - type for objects that support `complex(x)`
+    - note that no arithmetic operations are supported
+  - `SupportsFloat`
+    - type for objects that support `float(x)`
+    - note that no arithmetic operations are supported
+  - `SupportsInt`
+    - type for objects that support `int(x)`
+    - note that no arithmetic operations are supported
+  - `SupportsRound[T]`
+    - type for objects that support `round(x)`
+- Async protocols
+  - these protocols can be useful in async code
+  - `Awaitable[T]`
+  - `AsyncIterable[T]`
+  - `AsyncIterator[T]`
+- Context manager protocols
+  - there are two protocols for context managers
+    - for regular context managers
+    - for async ones
+  - these allow defining objects that can be used in `with` and `async with` statements
+  - `ContextManager[T]`
+  - `AsyncContextManager[T]`
+
+### Simple user-defined protocols
+
+- See [`user_defined_protocols.py`](ch08/user_defined_protocols.py), [`greeting_protocol.py`](ch08/greeting_protocol.py)
+- You can define your own protocol class by inheriting the special **`Protocol`** class
+
+```python
+class SupportsClose(Protocol):
+    def close(self) -> None:
+        pass  # Empty method body (explicit '...')
+
+
+class Resource:  # No SupportsClose base class!
+    # ... some methods ...
+
+    def close(self) -> None:
+        self.resource.release()
+
+
+def close_all(items: Iterable[SupportsClose]) -> None:
+    for item in items:
+        item.close()
+
+
+close_all([Resource(), open("some/file")])  # Okay!
+```
+
+- `Resource` is a subtype of the `SupportsClose` protocol since it defines a compatible `close` method
+- Regular file objects returned by `open()` are similarly compatible with the protocol, as they support `close()`
+
+### Defining subprotocols and subclassing protocols
+
+- See [`subprotocols.py`](ch08/subprotocols.py)
+- You can also define subprotocols
+- Existing protocols can be extended and merged using multiple inheritance
+
+```python
+# ... continuing from previous example
+
+
+class SupportsRead(Protocol):
+    def read(self, amount: int) -> bytes:
+        ...
+
+
+class TaggedReadableResource(SupportsClose, SupportsRead, Protocol):
+    label: str
+
+
+class AdvancedResource(Resource):
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def read(self, amount: int) -> bytes:
+        # some implementation
+        ...
+
+
+resource: TaggedReadableResource
+resource = AdvancedResource("handle with care")  # OK
+```
+
+- Note that inheriting from an existing protocol does not automatically turn the subclass into a protocol
+  - it just creates a regular (non-protocol) class or ABC that implements the given protocol (or protocols)
+  - the `Protocol` base class must always be explicitly present if you are defining a protocol
+
+```python
+class NotAProtocol(SupportsClose):  # This is NOT a protocol
+    new_attr: int
+
+
+class Concrete:
+    new_attr: int = 0
+
+    def close(self) -> None:
+        ...
+
+
+# Error: nominal subtyping used by default
+x: NotAProtocol = Concrete()  # Error!
+```
+
+```console
+$ mypy --pretty --strict ch08/subprotocols.py
+ch08/subprotocols.py:61: error: Incompatible types in assignment (expression
+has type "Concrete", variable has type "NotAProtocol")
+    x: NotAProtocol = Concrete()  # Error!
+                      ^
+```
+
+- You can include default implementations of methods in protocols
+  - if you explicitly subclass these protocols you can inherit these default implementations
+- Explicitly including a protocol as a base class is also a way of documenting that your class implements a particular protocol
+  - forces mypy to verify that your class implementation is actually compatible with the protocol
+
+### Recursive protocols
+
+- See [`recursive_protocols.py`](ch08/recursive_protocols.py)
+- Protocols can be recursive (self-referential) and mutually recursive
+  - useful for declaring abstract recursive collections such as trees and linked lists
+
+```python
+class TreeLike(Protocol):
+    value: int
+
+    @property
+    def left(self) -> Optional["TreeLike"]:
+        ...
+
+    @property
+    def right(self) -> Optional["TreeLike"]:
+        ...
+
+
+class SimpleTree:
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.left: Optional["SimpleTree"] = None
+        self.right: Optional["SimpleTree"] = None
+
+
+root: TreeLike = SimpleTree(0)  # OK
+```
+
+### Using isinstance() with protocols
+
+- See [`isinstance_with_protocols.py`](ch08/isinstance_with_protocols.py)
+- You can use a protocol class with `isinstance()` if you decorate it with the `@runtime_checkable` class decorator
+  - the decorator adds support for basic runtime structural checks
+  - `isinstance()` also works with the predefined protocols in `typing` such as `Iterable`
+  - `isinstance()` with protocols is not completely safe at runtime
+    - e.g., signatures of methods are not checked
+    - the runtime implementation only checks that all protocol members are defined
+
+```python
+@runtime_checkable
+class Portable(Protocol):
+    handles: int
+
+
+class Mug:
+    def __init__(self) -> None:
+        self.handles = 1
+
+
+mug = Mug()
+if isinstance(mug, Portable):
+    use(mug.handles)  # Works statically and at runtime
+```
+
+### Callback protocols
+
+- See [`callback_protocols.py`](ch08/callback_protocols.py)
+- Protocols can be used to define flexible callback types that are hard (or even impossible) to express using the `Callable[...]` syntax
+  - such as variadic, overloaded, and complex generic callbacks
+  - they are defined with a special `__call__` member
+
+```python
+class Combiner(Protocol):
+    def __call__(self, *vals: bytes, maxlen: Optional[int] = None) -> List[bytes]:
+        ...
+
+
+def batch_proc(data: Iterable[bytes], cb_results: Combiner) -> bytes:
+    for item in data:
+        ...
+
+
+def good_cb(*vals: bytes, maxlen: Optional[int] = None) -> List[bytes]:
+    ...
+
+
+def bad_cb(*vals: bytes, maxitems: Optional[int]) -> List[bytes]:
+    ...
+
+
+batch_proc([], good_cb)  # OK
+# Error! Argument 2 has incompatible type because of different name and kind in the
+# callback
+batch_proc([], bad_cb)
+```
+
+```console
+$ mypy --pretty --strict ch08/callback_protocols.py
+ch08/callback_protocols.py:28: error: Argument 2 to "batch_proc" has
+incompatible type
+"Callable[[VarArg(bytes), NamedArg(Optional[int], 'maxitems')], List[bytes]]";
+expected "Combiner"
+    batch_proc([], bad_cb)
+                   ^
+```
+
+- Callback protocols and `Callable` types can be used interchangeably
+  - keyword argument names in `__call__` methods must be identical, unless a double underscore prefix is used
+
+```python
+T = TypeVar("T")
+
+
+class Copy(Protocol):
+    def __call__(self, __origin: T) -> T:
+        ...
+
+
+copy_a: Callable[[T], T]
+copy_b: Copy
+
+copy_a = copy_b  # OK
+copy_b = copy_a  # Also OK
 ```
 
 ## Sources
