@@ -52,8 +52,11 @@
     - [Simple user-defined protocols](#simple-user-defined-protocols)
     - [Defining subprotocols and subclassing protocols](#defining-subprotocols-and-subclassing-protocols)
     - [Recursive protocols](#recursive-protocols)
-    - [Using isinstance() with protocols](#using-isinstance-with-protocols)
+    - [Using `isinstance()` with protocols](#using-isinstance-with-protocols)
     - [Callback protocols](#callback-protocols)
+  - [10. Dynamically typed code](#10-dynamically-typed-code)
+    - [Operations on `Any` values](#operations-on-any-values)
+    - [`Any` vs. `object`](#any-vs-object)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -1422,7 +1425,7 @@ class SimpleTree:
 root: TreeLike = SimpleTree(0)  # OK
 ```
 
-### Using isinstance() with protocols
+### Using `isinstance()` with protocols
 
 - See [`isinstance_with_protocols.py`](ch08/isinstance_with_protocols.py)
 - You can use a protocol class with `isinstance()` if you decorate it with the `@runtime_checkable` class decorator
@@ -1508,6 +1511,48 @@ copy_b: Copy
 copy_a = copy_b  # OK
 copy_b = copy_a  # Also OK
 ```
+
+## 10. Dynamically typed code
+
+- See [`dynamically_typed_code.py`](ch10/dynamically_typed_code.py)
+- Bodies of functions that don't have any explicit types in their function annotation are dynamically typed
+- Code outside functions is statically typed by default, and types of variables are inferred
+  - you can also make any variable dynamically typed by defining it explicitly with the type `Any`
+
+```python
+s = 1  # Statically typed (type int)
+s = "x"  # Type check error
+
+d: Any = 1  # Dynamically typed (type Any)
+d = "x"  # OK
+```
+
+```console
+$ mypy --pretty --strict ch10/dynamically_typed_code.py
+ch10/dynamically_typed_code.py:6: error: Incompatible types in assignment
+(expression has type "str", variable has type "int")
+    s = "x"  # Type check error
+        ^
+```
+
+### Operations on `Any` values
+
+- You can do anything using a value with type `Any`, and type checker does not complain
+- Values derived from an `Any` value also often have the type `Any` implicitly, as mypy can't infer a more precise result type
+  - e.g., if you get the attribute of an `Any` value or call a `Any` value the result is `Any`
+
+```python
+def f(x: Any) -> None:
+    y = x.foo()  # y has type Any
+    y.bar()      # Okay as well!
+```
+
+### `Any` vs. `object`
+
+- The type `object` is another type that can have an instance of arbitrary type as a value
+- Unlike `Any`, `object` is an ordinary static type, and only operations valid for all types are accepted for `object` values
+- You can use `cast()` or `isinstance()` to go from a general type such as `object` to a more specific type (subtype) such as `int`
+  - `cast()` is not needed with dynamically typed values (values with type `Any`)
 
 ## Sources
 
