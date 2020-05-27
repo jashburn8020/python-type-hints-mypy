@@ -58,6 +58,7 @@
     - [Operations on `Any` values](#operations-on-any-values)
     - [`Any` vs. `object`](#any-vs-object)
   - [11. Casts and type assertions](#11-casts-and-type-assertions)
+  - [12. Duck type compatibility](#12-duck-type-compatibility)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -1594,6 +1595,25 @@ ch11/casts_type_assertions.py:17: error: "int" has no attribute "whatever"
     x_str.whatever()  # Type check error
     ^
 ```
+
+## 12. Duck type compatibility
+
+- Certain types are compatible even though they aren't subclasses of each other
+- Mypy supports this idiom via duck type compatibility
+- This is supported for a small set of built-in types:
+  - `int` is duck type compatible with `float` and `complex`
+  - `float` is duck type compatible with `complex`
+  - in Python 2, `str` is duck type compatible with `unicode`
+
+```python
+def degrees_to_radians(degrees: float) -> float:
+    return math.pi * degrees / 180
+
+n = 90  # Inferred type 'int'
+print(degrees_to_radians(n))  # Okay!
+```
+
+- You can also often use protocols and structural subtyping to achieve a similar effect in a more principled and extensible fashion
 
 ## Sources
 
