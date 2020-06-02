@@ -62,6 +62,26 @@
   - [13. Creating a stub](#13-creating-a-stub)
     - [Stub file syntax](#stub-file-syntax)
     - [Using stub file syntax at runtime](#using-stub-file-syntax-at-runtime)
+  - [14. Generics](#14-generics)
+    - [Defining generic classes](#defining-generic-classes)
+    - [Generic class internals](#generic-class-internals)
+    - [Defining sub-classes of generic classes](#defining-sub-classes-of-generic-classes)
+    - [Generic functions](#generic-functions)
+    - [Generic methods and generic self](#generic-methods-and-generic-self)
+    - [Variance of generic types](#variance-of-generic-types)
+    - [Type variables with value restriction](#type-variables-with-value-restriction)
+    - [Type variables with upper bounds](#type-variables-with-upper-bounds)
+    - [Declaring decorators](#declaring-decorators)
+      - [Decorator factories](#decorator-factories)
+    - [Generic protocols](#generic-protocols)
+    - [Generic type aliases](#generic-type-aliases)
+  - [14.1 PEP 483 -- The Theory of Type Hints](#141-pep-483----the-theory-of-type-hints)
+    - [Background](#background)
+      - [Subtype relationships](#subtype-relationships)
+    - [Summary of gradual typing](#summary-of-gradual-typing)
+      - [Types vs. Classes](#types-vs-classes)
+    - [Generic types](#generic-types)
+      - [Covariance and Contravariance](#covariance-and-contravariance)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -334,6 +354,7 @@ ignore_missing_imports = True
 
 - It's a good idea to annotate widely imported modules pretty early on
   - this allows code using these modules to be type checked more effectively
+- Since mypy supports gradual typing, it's okay to leave some of these modules unannotated
 
 ### 5. Write annotations as you go
 
@@ -1681,6 +1702,862 @@ class Resource(Protocol):
         print(foo)
 ```
 
+## 14. Generics
+
+### Defining generic classes
+
+- See [`defining_generic_classes.py`](ch14/defining_generic_classes.py)
+- The built-in collection classes are generic classes
+- Generic types have one or more type parameters, which can be arbitrary types
+  - `Dict[int, str]`
+  - `List[int]`
+- Programs can also define new generic classes
+
+```python
+T = TypeVar("T")
+
+
+class Stack(Generic[T]):
+    def __init__(self, content: Optional[List[T]] = None) -> None:
+        if content is None:
+            self.items = []
+        else:
+            self.items = content
+
+    def push(self, item: T) -> None:
+        self.items.append(item)
+
+    def pop(self) -> T:
+        return self.items.pop()
+
+    def empty(self) -> bool:
+        return not self.items
+```
+
+- The `Stack` class can be used to represent a stack of any type
+- Using `Stack` is similar to built-in container types
+- Type inference works for user-defined generic types
+
+```python
+# Construct an empty Stack[int] instance
+stack = Stack[int]()
+stack.push(2)
+stack.pop()
+assert stack.empty()
+stack.push("x")  # Type error
+
+
+def process(stack: Stack[int]) -> None:
+    ...
+
+
+process(Stack())  # Argument has inferred type Stack[int]
+
+
+str_stack = Stack(["a", "b"])  # OK, inferred type is Stack[str]
+assert not stack.empty()
+str_stack.push(2)  # Type error
+```
+
+```console
+$ mypy --pretty --strict ch14/defining_generic_classes.py
+ch14/defining_generic_classes.py:30: error: Argument 1 to "push" of "Stack" has
+incompatible type "str"; expected "int"
+    stack.push("x")  # Type error
+               ^
+ch14/defining_generic_classes.py:42: error: Argument 1 to "push" of "Stack" has
+incompatible type "int"; expected "str"
+    str_stack.push(2)  # Type error
+                   ^
+```
+
+### Generic class internals
+
+- Indexing `Stack` returns essentially a copy of `Stack` that returns instances of the original class on instantiation
+  - ([`__class__`](https://docs.python.org/3/library/stdtypes.html#instance.__class__) contains the class to which a class instance belongs)
+
+```text
+>>> print(Stack)
+__main__.Stack
+>>> print(Stack[int])
+__main__.Stack[int]
+>>> print(Stack[int]().__class__)
+__main__.Stack
+```
+
+- Note that built-in types `list`, `dict` and so on do not support indexing in Python
+  - this is why we have the aliases `List`, `Dict` and so on in the `typing` module
+  - indexing these aliases gives you a class that directly inherits from the target class in Python
+  - ([`__bases__`](https://docs.python.org/3/library/stdtypes.html#class.__bases__) contains a tuple of base classes of a class object)
+
+```text
+>>> from typing import List
+>>> List[int]
+typing.List[int]
+>>> List[int].__bases__
+(<class 'list'>, typing.MutableSequence)
+```
+
+- Generic types could be instantiated or subclassed as usual classes, but the above examples illustrate that type variables are erased at runtime
+- Generic `Stack` instances are just ordinary Python objects
+  - have no extra runtime overhead or magic due to being generic, other than a metaclass that overloads the indexing operator (`[]`)
+
+### Defining sub-classes of generic classes
+
+- See [`subclasses_of_generic.py`](ch14/subclasses_of_generic.py)
+- User-defined generic classes and generic classes defined in `typing` can be used as base classes for other classes, both generic and non-generic
+
+```python
+KT = TypeVar("KT")
+VT = TypeVar("VT")
+
+
+class MyMap(Mapping[KT, VT]):
+    """This is a generic subclass of Mapping."""
+
+    def __getitem__(self, k: KT) -> VT:
+        ...  # Implementations omitted
+
+    def __iter__(self) -> Iterator[KT]:
+        ...
+
+    def __len__(self) -> int:
+        ...
+
+
+items: MyMap[str, int]  # Okay
+
+
+class StrDict(Dict[str, str]):
+    """This is a non-generic subclass of Dict."""
+
+    def __str__(self) -> str:
+        return "StrDict({})".format(super().__str__())
+
+
+data: StrDict[int, int]  # Error! StrDict is not generic
+data2: StrDict  # OK
+
+T = TypeVar("T")
+
+
+class Receiver(Generic[T]):
+    def accept(self, value: T) -> None:
+        ...
+
+
+class AdvancedReceiver(Receiver[T]):
+    ...
+```
+
+```console
+$ mypy --pretty --strict ch14/subclasses_of_generic.py
+ch14/subclasses_of_generic.py:32: error: "StrDict" expects no type arguments,
+but 2 given
+    data: StrDict[int, int]  # Error! StrDict is not generic
+          ^
+```
+
+- Note: You have to add an explicit `Mapping` base class if you want mypy to consider a user-defined class as a mapping (and `Sequence` for sequences, etc.)
+  - mypy doesn't use structural subtyping for these ABCs, unlike simpler protocols like `Iterable`
+- `Generic` can be omitted from bases if there are other base classes that include type variables, such as `Mapping[KT, VT]` in the above example
+  - if you include `Generic[...]` in bases, then it should list all type variables present in other bases (or more, if needed)
+  - the order of type variables is defined by the following rules:
+    - if `Generic[...]` is present, then the order of variables is always determined by their order in `Generic[...]`
+    - if there are no `Generic[...]` in bases, then all type variables are collected in the lexicographic order (i.e. by first appearance)
+
+```python
+S = TypeVar("S")
+U = TypeVar("U")
+V = TypeVar("V")
+
+
+class One(Generic[V]):
+    ...
+
+
+class Another(Generic[V]):
+    ...
+
+
+class First(One[V], Another[S]):
+    ...
+
+
+class Second(One[V], Another[S], Generic[S, U, V]):
+    ...
+
+
+x: First[int, str]  # Here V is bound to int, S is bound to str
+y: Second[int, str, Any]  # Here S is int, U is str, and V is Any
+```
+
+### Generic functions
+
+- See [`generic_functions.py`](ch14/generic_functions.py)
+- Generic type variables can also be used to define generic functions
+- A single definition of a type variable (such as `T`) can be used in multiple generic functions or classes
+- A variable cannot have a type variable in its type unless the type variable is bound in a containing generic class or function
+
+```python
+T = TypeVar("T")  # Declare type variable
+
+
+def first(seq: Sequence[T]) -> T:  # Generic function
+    return seq[0]
+
+
+def last(seq: Sequence[T]) -> T:
+    """Type variable `T` is reused."""
+    return seq[-1]
+
+
+s = first("foo")  # s has type str.
+assert s == "f"
+n = first([1, 2, 3])  # n has type int.
+assert n == 1
+c = last((1 + 2j, 3 + 4j))  # c has type complex.
+assert c == 3 + 4j
+```
+
+### Generic methods and generic self
+
+- See [`generic_methods_self.py`](ch14/generic_methods_self.py)
+- You can define generic methods
+  - use a type variable in the method signature that is different from class type variables
+  - `self` may also be generic, allowing a method to return the most precise type known at the point of access
+
+```python
+# Defines that `Shape` is the upper bound, i.e., an actual type substituted (explicitly
+# or implicitly) for the type variable must be a subclass of the boundary type.
+T = TypeVar("T", bound="Shape")
+
+
+class Shape:
+    def set_scale(self: T, scale: float) -> T:
+        self.scale = scale
+        return self
+
+
+class Circle(Shape):
+    def set_radius(self, r: float) -> "Circle":
+        self.radius = r
+        return self
+
+
+class Square(Shape):
+    def set_width(self, w: float) -> "Square":
+        self.width = w
+        return self
+
+
+circle = Circle().set_scale(0.5).set_radius(2.7)  # type: Circle
+square = Square().set_scale(0.5).set_width(3.2)  # type: Square
+```
+
+- Other uses are factory methods, such as copy and deserialization
+- For **class methods**, you can also define generic `cls`, using `Type[T]`
+
+```python
+U = TypeVar("U", bound="Friend")
+
+
+class Friend:
+    other = None  # type: Friend
+
+    @classmethod
+    def make_pair(cls: Type[U]) -> Tuple[U, U]:
+        a, b = cls(), cls()
+        a.other = b
+        b.other = a
+        return a, b
+
+
+class SuperFriend(Friend):
+    pass
+
+
+a, b = SuperFriend.make_pair()
+assert isinstance(a, SuperFriend)
+```
+
+- Note that when overriding a method with generic `self`, you must either
+  - return a generic `self` too, or
+  - return an instance of the current class
+    - in the latter case, you must implement this method in all future subclasses
+
+### Variance of generic types
+
+- There are 3 main kinds of generic types with respect to subtype relations between them: invariant, covariant, and contravariant
+- See [Covariance and Contravariance](#covariance-and-contravariance)
+
+### Type variables with value restriction
+
+- See [`type_vars_value_restriction.py`](ch14/type_vars_value_restriction.py)
+- By default, a type variable can be replaced with any type
+- Sometimes it's useful to have a type variable that can only have some specific types as its value
+- A typical example is a type variable that can only have values `str` and `bytes`:
+
+```python
+from typing import TypeVar
+
+AnyStr = TypeVar('AnyStr', str, bytes)
+```
+
+- This is actually such a common type variable that `AnyStr` is defined in `typing`
+- We can use `AnyStr` to define a function that can concatenate two strings or bytes objects
+  - this is different from a union type, since combinations of `str` and `bytes` are not accepted
+
+```python
+def concat(x: AnyStr, y: AnyStr) -> AnyStr:
+    return x + y
+
+
+concat("a", "b")  # Okay
+concat(b"a", b"b")  # Okay
+concat(1, 2)  # Error!
+concat("string", b"bytes")  # Error!
+
+
+def union_concat(x: Union[str, bytes], y: Union[str, bytes]) -> Union[str, bytes]:
+    return x + y  # Error: can't concatenate str and bytes
+```
+
+```console
+$ mypy --pretty --strict ch14/type_vars_value_restriction.py
+ch14/type_vars_value_restriction.py:10: error: Value of type variable "AnyStr"
+of "concat" cannot be "int"
+    concat(1, 2)        # Error!
+    ^
+ch14/type_vars_value_restriction.py:11: error: Value of type variable "AnyStr"
+of "concat" cannot be "object"
+    concat('string', b'bytes')   # Error!
+    ^
+ch14/type_vars_value_restriction.py:14: error: Unsupported operand types for +
+("str" and "bytes")
+        return x + y  # Error: can't concatenate str and bytes
+               ^
+ch14/type_vars_value_restriction.py:14: error: Unsupported operand types for +
+("bytes" and "str")
+        return x + y  # Error: can't concatenate str and bytes
+               ^
+ch14/type_vars_value_restriction.py:14: note: Both left and right operands are unions
+```
+
+- Another interesting special case is calling `concat()` with a subtype of `str`
+  - you may expect that the type of `ss` is `S`, but the type is actually `str`
+  - a subtype gets promoted to one of the valid values for the type variable, which in this case is `str`
+
+```python
+class S(str): pass
+
+ss = concat(S('foo'), S('bar'))
+assert isinstance(ss, str)
+```
+
+### Type variables with upper bounds
+
+- See [`type_vars_upper_bounds.py`](ch14/type_vars_upper_bounds.py)
+- A type variable can be restricted to having values that are subtypes of a specific type
+- This type is called the upper bound of the type variable, and is specified with the `bound=...` keyword argument to `TypeVar`
+- In the definition of a generic function that uses such a type variable `T`, the type represented by `T` is assumed to be a subtype of its upper bound, so the function can use methods of the upper bound on values of type `T`
+  - in a call to such a function, the type `T` must be replaced by a type that is a subtype of its upper bound
+
+```python
+T = TypeVar("T", bound=SupportsAbs[float])
+
+
+def largest_in_absolute_value(*xs: T) -> T:
+    return max(xs, key=abs)  # Okay, because T is a subtype of SupportsAbs[float].
+
+
+largest_in_absolute_value(-3.5, 2)  # Okay, has type float.
+largest_in_absolute_value(5 + 6j, 7)  # Okay, has type complex.
+# Error: 'str' is not a subtype of SupportsAbs[float].
+largest_in_absolute_value("a", "b")
+```
+
+```console
+$ mypy --pretty --strict ch14/type_vars_upper_bounds.py
+ch14/type_vars_upper_bounds.py:15: error: Value of type variable "T" of
+"largest_in_absolute_value" cannot be "str"
+    largest_in_absolute_value("a", "b")
+    ^
+```
+
+- Type parameters of generic classes may also have upper bounds, which restrict the valid values for the type parameter in the same way
+- A type variable may not have both a value restriction
+
+### Declaring decorators
+
+- See [`declaring_decorators.py`](ch14/declaring_decorators.py)
+- One common application of type variable upper bounds is in declaring a decorator that preserves the signature of the function it decorates, regardless of that signature
+- Note that class decorators are handled differently than function decorators in mypy
+  - decorating a class does not erase its type, even if the decorator has incomplete type annotations
+
+```python
+F = TypeVar("F", bound=Callable[..., Any])
+
+# A decorator that preserves the signature.
+def my_decorator(func: F) -> F:
+    def wrapper(*args, **kwds):
+        print("Calling", func)
+        return func(*args, **kwds)
+
+    return cast(F, wrapper)
+
+
+# A decorated function.
+@my_decorator
+def foo(a: int) -> str:
+    return str(a)
+
+
+a = foo(12)
+reveal_type(a)  # str
+foo("x")  # Type check error: incompatible type "str"; expected "int"
+```
+
+```console
+$ mypy --pretty --strict ch14/declaring_decorators.py
+ch14/declaring_decorators.py:9: error: Function is missing a type annotation
+        def wrapper(*args, **kwds):
+        ^
+ch14/declaring_decorators.py:23: note: Revealed type is 'builtins.str'
+ch14/declaring_decorators.py:24: error: Argument 1 to "foo" has incompatible
+type "str"; expected "int"
+    foo("x")  # Type check error: incompatible type "str"; expected "int"
+        ^
+```
+
+- The bound on `F` is used so that calling the decorator on a non-function (e.g. `my_decorator(1)`) will be rejected
+- Note that the `wrapper()` function is not type-checked
+  - wrapper functions are typically small enough that this is not a big problem
+  - also the reason for the `cast()` call in the return statement in `my_decorator()`
+
+#### Decorator factories
+
+- See [`decorator_factories.py`](ch14/decorator_factories.py)
+- Functions that take arguments and return a decorator (also called second-order decorators), are similarly supported via generics
+
+```python
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def route(url: str) -> Callable[[F], F]:
+    ...
+
+
+@route(url="/")
+def index(request: Any) -> str:
+    return "Hello world"
+```
+
+- Sometimes the same decorator supports both bare calls and calls with arguments
+  - achieved by combining with `@overload`
+
+```python
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+# Bare decorator usage
+@overload
+def atomic(__func: F) -> F:
+    ...
+
+
+# Decorator with arguments
+@overload
+def atomic(*, savepoint: bool = True) -> Callable[[F], F]:
+    ...
+
+
+# Implementation
+def atomic(__func: Callable[..., Any] = None, *, savepoint: bool = True):
+    def decorator(func: Callable[..., Any]):
+        ...  # Code goes here
+
+    if __func is not None:
+        return decorator(__func)
+    else:
+        return decorator
+
+
+# Usage
+@atomic
+def func1() -> None:
+    ...
+
+
+@atomic(savepoint=False)
+def func2() -> None:
+    ...
+```
+
+### Generic protocols
+
+- See [`generic_protocols.py`](ch14/generic_protocols.py)
+- Mypy supports generic protocols
+  - see also [8. Protocols and structural subtyping](#8-protocols-and-structural-subtyping)
+- Several predefined protocols are generic, such as `Iterable[T]`
+- You can define additional generic protocols
+  - generic protocols mostly follow the normal rules for generic classes
+
+```python
+T = TypeVar("T")
+
+
+class Box(Protocol[T]):
+    content: T
+
+
+def do_stuff(one: Box[str], other: Box[bytes]) -> None:
+    ...
+
+
+class StringWrapper:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class BytesWrapper:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+
+do_stuff(StringWrapper("one"), BytesWrapper(b"other"))  # OK
+
+x: Box[float] = ...
+y: Box[int] = ...
+x = y  # Error -- Box is invariant
+```
+
+```console
+$ mypy --pretty --strict ch14/generic_protocols.py
+ch14/generic_protocols.py:31: error: Incompatible types in assignment
+(expression has type "Box[int]", variable has type "Box[float]")
+    x = y  # Error -- Box is invariant
+        ^
+```
+
+- The main difference between generic protocols and ordinary generic classes is that mypy checks that the declared variances of generic type variables in a protocol match how they are used in the protocol definition
+
+```python
+T = TypeVar("T")
+
+class ReadOnlyBoxInv(Protocol[T]):  # Error: covariant type variable expected
+    def content(self) -> T:
+        ...
+
+
+T_co = TypeVar("T_co", covariant=True)
+
+
+class ReadOnlyBoxCov(Protocol[T_co]):  # OK
+    def content(self) -> T_co:
+        ...
+
+
+class CovFloatWrapper:
+    def content(self) -> float:
+        ...
+
+
+class CovIntWrapper:
+    def content(self) -> int:
+        ...
+
+
+ax: ReadOnlyBoxCov[float] = CovFloatWrapper()
+ay: ReadOnlyBoxCov[int] = CovIntWrapper()
+ax = ay  # OK -- ReadOnlyBoxCov is covariant
+
+az: ReadOnlyBoxCov[float] = CovIntWrapper()  # OK
+aerr: ReadOnlyBoxCov[int] = CovFloatWrapper()  # Error
+```
+
+```console
+$ mypy --pretty --strict ch14/generic_protocols.py
+ch14/generic_protocols.py:34: error: Invariant type variable 'T' used in
+protocol where covariant one is expected
+    class ReadOnlyBoxInv(Protocol[T]):  # Error: covariant type variable e...
+    ^
+ch14/generic_protocols.py:62: error: Incompatible types in assignment
+(expression has type "CovFloatWrapper", variable has type "ReadOnlyBoxCov[int]")
+    aerr: ReadOnlyBoxCov[int] = CovFloatWrapper()  # Error
+                                ^
+ch14/generic_protocols.py:62: note: Following member(s) of "CovFloatWrapper" have conflicts:
+ch14/generic_protocols.py:62: note:     Expected:
+ch14/generic_protocols.py:62: note:         def content(self) -> int
+ch14/generic_protocols.py:62: note:     Got:
+ch14/generic_protocols.py:62: note:         def content(self) -> float
+```
+
+- Generic protocols can also be recursive
+
+```python
+T = TypeVar("T")
+
+class Linked(Protocol[T]):
+    """Generic protocols can be recursive."""
+
+    val: T
+
+    def next(self) -> "Linked[T]":
+        ...
+
+
+class L:
+    val: int
+
+    ...  # details omitted
+
+    def next(self) -> "L":
+        ...  # details omitted
+
+
+def last(seq: Linked[T]) -> T:
+    ...  # implementation omitted
+
+
+result = last(L())  # Inferred type of 'result' is 'int'
+```
+
+### Generic type aliases
+
+- See [`generic_type_aliases.py`](ch14/generic_type_aliases.py)
+- [Type aliases](#type-aliases) can be generic
+- They can be used in two ways:
+  - subscripted aliases are equivalent to original types with substituted type variables, so the number of type arguments must match the number of free type variables in the generic type alias
+  - unsubscripted aliases are treated as original types with free variables replaced with `Any`
+
+```python
+S = TypeVar("S")
+
+TInt = Tuple[int, S]
+UInt = Union[S, int]
+CBack = Callable[..., S]
+
+
+def response(query: str) -> UInt[str]:  # Same as Union[str, int]
+    ...
+
+
+def activate(cb: CBack[S]) -> S:  # Same as Callable[..., S]
+    ...
+
+
+table_entry: TInt  # Same as Tuple[int, Any]
+
+T = TypeVar("T", int, float, complex)
+
+Vec = Iterable[Tuple[T, T]]
+
+
+def inproduct(v: Vec[T]) -> T:
+    return sum(x * y for x, y in v)
+
+
+def dilate(v: Vec[T], scale: T) -> Vec[T]:
+    return ((x * scale, y * scale) for x, y in v)
+
+
+v1: Vec[int] = []  # Same as Iterable[Tuple[int, int]]
+v2: Vec = []  # Same as Iterable[Tuple[Any, Any]]
+v3: Vec[int, int] = []  # Error: Invalid alias, too many type arguments!
+```
+
+## 14.1 PEP 483 -- The Theory of Type Hints
+
+### Background
+
+- Here we assume that type is a set of values and a set of functions that one can apply to these values
+- There are several ways to define a particular type:
+  - by explicitly listing all values
+    - e.g., `True` and `False` form the type `bool`
+  - by specifying functions which can be used with variables of a type
+    - e.g., all objects that have a `__len__` method form the type `Sized`
+    - both `[1, 2, 3]` and `abc` belong to this type, since one can call `len` on them
+      - `len([1, 2, 3]) # OK`
+      - `len('abc') # also OK`
+      - `len(42) # not a member of Sized`
+  - by a simple class definition - all instances of a class also form a type
+    - e.g., `class UserID(int)`
+  - complex types
+    - e.g., one can define the type `FancyList` as all lists containing only instances of `int`, `str` or their subclasses
+    - the value `[1, 'abc', UserID(42)]` has this type
+
+#### Subtype relationships
+
+- See [`subtype_relationships.py`](ch14.1/subtype_relationships.py)
+- The _subtype relation_ arises from the question:
+  - if `first_var` has type `first_type`, and `second_var` has type `second_type`
+    - is it safe to assign `first_var = second_var`?
+    - is `second_type` a subtype of `first_type`?
+- A strong criterion for when it should be safe is:
+  1. every value from `second_type` (subtype) is also in the set of values of `first_type` (supertype); and
+  2. every function from `first_type` (supertype) is also in the set of functions of `second_type` (subtype)
+- By this definition:
+  - every type is a subtype of itself
+  - the set of values becomes smaller in the process of subtyping, while the set of functions becomes larger
+- Example: Integers are _subtype_ of real numbers
+  - every integer is of course also a real number
+  - integers support more operations, such as, e.g., bitwise shifts `<<` and `>>`
+- Tricky example: If `List[int]` denotes the type formed by all lists containing only integer numbers, then it is _not a subtype_ of `List[float]`, formed by all lists that contain only real numbers
+  - the first condition of subtyping holds
+  - but appending a real number only works with `List[float]` so that the second condition fails
+
+```python
+def append_pi(lst: List[float]) -> None:
+    lst += [3.14]
+
+
+my_list = [1, 3, 5]  # type: List[int]
+append_pi(my_list)  # Naively, this should be safe...
+my_list[-1] << 5  # ... but this fails
+```
+
+```console
+$ python ch14.1/subtype_relationships.py
+Traceback (most recent call last):
+  File "ch14.1/subtype_relationships.py", line 21, in <module>
+    my_list[-1] << 5  # ... but this fails
+TypeError: unsupported operand type(s) for <<: 'float' and 'int'
+
+$ mypy --pretty --strict ch14.1/subtype_relationships.py
+ch14.1/subtype_relationships.py:20: error: Argument 1 to "append_pi" has
+incompatible type "List[int]"; expected "List[float]"
+    append_pi(my_list)  # Naively, this should be safe...
+              ^
+ch14.1/subtype_relationships.py:20: note: "List" is invariant -- see http://mypy.readthedocs.io/en/latest/common_issues.html#variance
+ch14.1/subtype_relationships.py:20: note: Consider using "Sequence" instead, which is covariant
+```
+
+### Summary of gradual typing
+
+- Gradual typing allows one to annotate only part of a program, thus leverage desirable aspects of both dynamic and static typing
+- The **is-consistent-with** relationship is similar to is-subtype-of
+  - not transitive when the `Any` type is involved
+  - is not symmetric
+  - assigning `a_value` to `a_variable` is OK if the type of `a_value` is consistent with the type of `a_variable`
+  - defined by three rules:
+    - a type `t1` is consistent with a type `t2` if `t1` is a subtype of `t2` (but not the other way around)
+    - `Any` is consistent with every type (but `Any` is not a subtype of every type)
+    - every type is consistent with `Any` (but every type is not a subtype of `Any`)
+- `Any` declares a fallback to dynamic typing and shuts up complaints from the static checker
+
+#### Types vs. Classes
+
+- Classes are object factories defined by the `class` statement, and returned by the `type(obj)` built-in function
+  - a dynamic, runtime concept
+- Type concept is described above
+  - types appear in variable and function type annotations
+  - used by static type checkers
+- Every class is a type, but it is tricky and error prone to implement a class that exactly represents semantics of a given type:
+  - `int` is a class and a type
+  - `UserID` is a class and a type
+  - `Union[str, int]` is a type but not a proper class
+
+### Generic types
+
+- Generic type constructor
+  - e.g., `Tuple` can take a concrete type `float` and make a concrete type `Vector = Tuple[float, ...]`
+    - can take another type `UserID` and make another concrete type `Registry = Tuple[UserID, ...]`
+  - similar to semantics of functions
+    - a function takes a value and returns a value
+    - generic type constructor takes a type and "returns" a type
+
+#### Covariance and Contravariance
+
+- See [`covariance_contravariance.py`](ch14.1/covariance_contravariance.py)
+- If `t2` is a subtype of `t1`, then a generic type constructor `GenType` is called:
+  - _covariant_, if `GenType[t2]` is a subtype of `GenType[t1]` for all such `t1` and `t2`
+  - _contravariant_, if `GenType[t1]` is a subtype of `GenType[t2]` for all such `t1` and `t2`
+  - _invariant_, if neither of the above is true
+- **Covariant**
+  - `Union` behaves covariantly in all its arguments
+    - `Union[t1, t2, ...]` is a subtype of `Union[u1, u2, ...]`, if `t1` is a subtype of `u1`, etc
+  - `FrozenSet[T]` is also covariant
+    - consider `int` and `float` in place of `T`
+    - `int` is a subtype of `float`
+    - set of values of `FrozenSet[int]` is clearly a subset of values of `FrozenSet[float]`
+    - set of functions from `FrozenSet[float]` is a subset of set of functions from `FrozenSet[int]`
+    - by definition `FrozenSet[int]` is a subtype of `FrozenSet[float]`
+- **Invariant**
+  - `List[T]` is invariant
+  - although set of values of `List[int]` is a subset of values of `List[float]`, only `int` could be appended to a `List[int]`
+    - `List[int]` is not a subtype of `List[float]`
+  - mutable types are typically invariant
+
+```python
+class Shape:
+    pass
+
+class Circle(Shape):
+    def rotate(self) -> None:
+        ...
+
+def add_one(things: List[Shape]) -> None:
+    things.append(Shape())
+
+my_things: List[Circle] = []
+add_one(my_things)     # This may appear safe, but...
+my_things[0].rotate()  # ...this will fail
+```
+
+```console
+$ mypy --pretty --strict ch14.1/covariance_contravariance.py
+ch14.1/covariance_contravariance.py:18: error: Argument 1 to "add_one" has
+incompatible type "List[Circle]"; expected "List[Shape]"
+    add_one(my_things)     # This may appear safe, but...
+            ^
+ch14.1/covariance_contravariance.py:18: note: "List" is invariant -- see http://mypy.readthedocs.io/en/latest/common_issues.html#variance
+ch14.1/covariance_contravariance.py:18: note: Consider using "Sequence" instead, which is covariant
+```
+
+- **Contravariant**
+  - the callable type is covariant in the return type, but contravariant in the arguments
+  - for two callable types that differ only in the **return type**, the subtype relationship for the callable types follows that of the return types, e.g.,
+    - `Callable[[], int]` is a subtype of `Callable[[], float]`
+  - for two callable types that differ only in the type of **one argument**, the subtype relationship for the callable types goes in the opposite direction as for the argument types, e.g.,
+    - `Callable[[float], None]` is a subtype of `Callable[[int], None]`
+    - if `Manager` is a subtype of `Employee`, and we have `def calculate_all(lst: List[Manager], salary: Callable[[Manager], Decimal]): ...`
+      - a function that can calculate the salary of a manager is expected
+      - a function that can calculate the salary of an employee is acceptable
+        - `Callable[[Employee], Decimal]`
+        - a function that operates on an `Employee` can also operate on a `Manager`
+          - every value of `Manager` is also a value of `Employee`
+          - every function of `Employee` is also a function of `Manager`
+      - `Callable[[Employee], Decimal]` is a subtype of `Callable[[Manager], Decimal]`
+  - to make more precise type annotations for functions:
+    - choose the most general type for every argument
+    - and the most specific type for the return value
+- It is possible to declare the variance for user defined generic types by using special keywords `covariant` and `contravariant` in the definition of type variables used as parameters
+  - types are invariant by default
+
+```python
+T = TypeVar('T')
+T_co = TypeVar('T_co', covariant=True)
+T_contra = TypeVar('T_contra', contravariant=True)
+
+class LinkedList(Generic[T]):  # invariant by default
+    ...
+    def append(self, element: T) -> None:
+        ...
+
+class Box(Generic[T_co]):      #  this type is declared covariant
+    def __init__(self, content: T_co) -> None:
+        self._content = content
+    def get_content(self) -> T_co:
+        return self._content
+
+class Sink(Generic[T_contra]): # this type is declared contravariant
+    def send_to_nowhere(self, data: T_contra) -> None:
+        with open(os.devnull, 'w') as devnull:
+            print(data, file=devnull)
+```
+
 ## Sources
 
 - "Welcome to Mypy Documentation!" _Mypy Documentation_, mypy.readthedocs.io/en/stable/index.html.
+- van Rossum, Guido, and Ivan Levkivskyi. "PEP 483 -- The Theory of Type Hints." _Python.org_, 19 Dec. 2014, www.python.org/dev/peps/pep-0483/.
