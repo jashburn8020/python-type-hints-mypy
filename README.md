@@ -82,6 +82,25 @@
       - [Types vs. Classes](#types-vs-classes)
     - [Generic types](#generic-types)
       - [Covariance and Contravariance](#covariance-and-contravariance)
+  - [15. More types](#15-more-types)
+    - [The `NoReturn` type](#the-noreturn-type)
+    - [`NewType`s](#newtypes)
+    - [Function overloading](#function-overloading)
+      - [Runtime behavior](#runtime-behavior)
+      - [Type checking calls to overloads](#type-checking-calls-to-overloads)
+      - [Type checking the variants](#type-checking-the-variants)
+      - [Type checking the implementation](#type-checking-the-implementation)
+    - [Advanced uses of self-types](#advanced-uses-of-self-types)
+      - [Restricted methods in generic classes](#restricted-methods-in-generic-classes)
+      - [Mixin classes](#mixin-classes)
+      - [Precise typing of alternative constructors](#precise-typing-of-alternative-constructors)
+    - [Typing `async`/`await`](#typing-asyncawait)
+    - [`TypedDict`](#typeddict)
+      - [Totality](#totality)
+      - [Supported operations](#supported-operations)
+      - [Class-based syntax](#class-based-syntax)
+      - [Mixing required and non-required items](#mixing-required-and-non-required-items)
+      - [Unions of `TypedDict`s](#unions-of-typeddicts)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -2557,7 +2576,858 @@ class Sink(Generic[T_contra]): # this type is declared contravariant
             print(data, file=devnull)
 ```
 
+## 15. More types
+
+### The `NoReturn` type
+
+- See [`noreturn_type.py`](ch15/noreturn_type.py)
+- Mypy provides support for functions that never return
+  - e.g., a function that unconditionally raises an exception
+- Mypy will ensure that functions annotated as returning `NoReturn` truly never return, either implicitly or explicitly
+- Mypy will also recognize that the code after calls to such functions is unreachable and will behave accordingly
+
+```python
+def stop() -> NoReturn:
+    raise Exception("no way")
+
+
+def f(x: int) -> int:
+    if x == 0:
+        return x
+    stop()
+    return "whatever works"  # No error in an unreachable block
+```
+
+### `NewType`s
+
+- See [`newtypes.py`](ch15/newtypes.py)
+- There are situations where you may want to avoid programming errors by creating simple derived classes that are only used to distinguish certain values from base class instances
+
+```python
+class UserId(int):
+    pass
+
+def get_by_user_id(user_id: UserId):
+    ...
+```
+
+- However, this approach introduces some runtime overhead
+- To avoid this, the `typing` module provides a _helper function_ `NewType` that creates simple unique types with almost zero runtime overhead
+- Mypy will treat the statement `Derived = NewType('Derived', Base)` as being roughly equivalent to the following definition:
+
+```python
+class Derived(Base):
+    def __init__(self, _x: Base) -> None:
+        ...
+```
+
+- At runtime, `NewType('Derived', Base)` will return a dummy function that simply returns its argument:
+
+```python
+def Derived(_x):
+    return _x
+```
+
+- Mypy will require explicit casts from `int` where `UserId` is expected, while implicitly casting from `UserId` where `int` is expected
+
+```python
+UserId = NewType("UserId", int)
+
+
+def name_by_id(user_id: UserId) -> str:
+    ...
+
+
+UserId("user")  # Fails type check
+
+name_by_id(42)  # Fails type check
+name_by_id(UserId(42))  # OK
+
+num = UserId(5) + 1  # type: int
+```
+
+```console
+$ mypy --pretty --strict ch15/newtypes.py
+ch15/newtypes.py:12: error: Argument 1 to "UserId" has incompatible type "str";
+expected "int"
+    UserId("user")  # Fails type check
+           ^
+ch15/newtypes.py:14: error: Argument 1 to "name_by_id" has incompatible type
+"int"; expected "UserId"
+    name_by_id(42)  # Fails type check
+               ^
+```
+
+- The function returned by `NewType` accepts only one argument; this is equivalent to supporting only one constructor accepting an instance of the base class
+
+```python
+class PacketId:
+    def __init__(self, major: int, minor: int) -> None:
+        self._major = major
+        self._minor = minor
+
+
+TcpPacketId = NewType("TcpPacketId", PacketId)
+
+packet = PacketId(100, 100)
+tcp_packet = TcpPacketId(packet)  # OK
+
+tcp_packet = TcpPacketId(127, 0)  # Fails in type checker and at runtime
+```
+
+```console
+ch15/newtypes.py:31: error: Too many arguments for "TcpPacketId"
+    tcp_packet = TcpPacketId(127, 0)  # Fails in type checker and at runti...
+                 ^
+ch15/newtypes.py:31: error: Argument 1 to "TcpPacketId" has incompatible type
+"int"; expected "PacketId"
+    tcp_packet = TcpPacketId(127, 0)  # Fails in type checker and at runti...
+                             ^
+```
+
+- You cannot use `isinstance()` or `issubclass()` on the object returned by `NewType()`, because function objects don't support these operations
+- You cannot create subclasses of these objects either
+- Unlike _type aliases_, `NewType` will create an entirely new and unique type when used
+  - the intended purpose of `NewType` is to help you detect cases where you accidentally mixed together the old base type and the new derived type
+  - e.g., the following will successfully typecheck when using type aliases
+
+```python
+UserId = int
+
+def name_by_id(user_id: UserId) -> str:
+    ...
+
+name_by_id(3)  # ints and UserId are synonymous
+```
+
+### Function overloading
+
+- See [`function_overloading.py`](ch15/function_overloading.py)
+- Sometimes the arguments and types in a function depend on each other in ways that can't be captured with a `Union`
+- For example, suppose we want to write a function that can accept x-y coordinates
+  - if we pass in just a single x-y coordinate, we return a `ClickEvent` object
+  - if we pass in two x-y coordinates, we return a `DragEvent` object
+
+```python
+def mouse_event(
+    x1: int, y1: int, x2: Optional[int] = None, y2: Optional[int] = None
+) -> Union[ClickEvent, DragEvent]:
+```
+
+- This function signature is too loose
+  - implies `mouse_event` could return either object regardless of the number of arguments we pass in
+  - does not prohibit a caller from passing in the wrong number of `int`s
+- Use overloading, which lets us give the same function multiple type annotations (signatures) to more accurately describe the function's behavior
+
+```python
+# Overload *variants* for 'mouse_event'. These variants give extra information to the
+# type checker. They are ignored at runtime.
+
+
+@overload
+def mouse_event(x1: int, y1: int) -> ClickEvent:
+    ...
+
+
+@overload
+def mouse_event(x1: int, y1: int, x2: int, y2: int) -> DragEvent:
+    ...
+
+
+# The actual *implementation* of 'mouse_event'. The implementation contains the actual
+# runtime logic.
+
+
+def mouse_event(
+    x1: int, y1: int, x2: Optional[int] = None, y2: Optional[int] = None
+) -> Union[ClickEvent, DragEvent]:
+    if x2 is None and y2 is None:
+        return ClickEvent(x1, y1)
+    elif x2 is not None and y2 is not None:
+        return DragEvent(x1, y1, x2, y2)
+    else:
+        raise TypeError("Bad arguments")
+
+
+click_event = mouse_event(1, 2)  # OK
+click_event = mouse_event(1, 2, 3, 4)  # Error
+
+drag_event = mouse_event(1, 2, 3, 4)  # OK
+drag_event = mouse_event(1, 2)  # Error
+drag_event = mouse_event(1, 2, 3)  # Error
+```
+
+```console
+$ mypy --pretty --strict ch15/function_overloading.py
+ch15/function_overloading.py:46: error: Incompatible types in assignment
+(expression has type "DragEvent", variable has type "ClickEvent")
+    click_event = mouse_event(1, 2, 3, 4)  # Error
+                  ^
+ch15/function_overloading.py:49: error: Incompatible types in assignment
+(expression has type "ClickEvent", variable has type "DragEvent")
+    drag_event = mouse_event(1, 2)  # Error
+                 ^
+ch15/function_overloading.py:50: error: No overload variant of "mouse_event"
+matches argument types "int", "int", "int"
+    drag_event = mouse_event(1, 2, 3)  # Error
+                 ^
+ch15/function_overloading.py:50: note: Possible overload variants:
+ch15/function_overloading.py:50: note:     def mouse_event(x1: int, y1: int) -> ClickEvent
+ch15/function_overloading.py:50: note:     def mouse_event(x1: int, y1: int, x2: int, y2: int) -> DragEvent
+```
+
+- Another example:
+
+```python
+T = TypeVar("T")
+
+
+class MyList(Sequence[T]):
+    def __init__(self, content: Sequence[T]) -> None:
+        self.content = content
+
+    @overload
+    def __getitem__(self, index: int) -> T:
+        ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[T]:
+        ...
+
+    def __getitem__(self, index: Union[int, slice]) -> Union[T, Sequence[T]]:
+        if isinstance(index, int):
+            # Return a T here
+            return self.content[index]
+        elif isinstance(index, slice):
+            # Return a sequence of Ts here
+            return self.content[index]
+        else:
+            raise TypeError("Invalid arguments")
+
+    def __len__(self) -> int:
+        return len(self.content)
+
+
+my_list = MyList([1, 2, 3])
+my_elem = my_list[1]  # OK
+my_elem = my_list[:]  # Error
+
+my_seq = my_list[:]  # OK
+my_seq = my_list[1]  # Error
+```
+
+```console
+$ mypy --pretty --strict ch15/function_overloading.py
+ch15/function_overloading.py:84: error: Incompatible types in assignment
+(expression has type "Sequence[int]", variable has type "int")
+    my_elem = my_list[:]  # Error
+              ^
+ch15/function_overloading.py:87: error: Incompatible types in assignment
+(expression has type "int", variable has type "Sequence[int]")
+    my_seq = my_list[1]  # Error
+             ^
+```
+
+#### Runtime behavior
+
+- An overloaded function must consist of two or more overload variants followed by an implementation
+  - the variants and the implementations must be adjacent in the code
+  - think of them as _one indivisible unit_
+- The variant bodies must all be empty; only the implementation is allowed to contain code
+  - using the `pass` keyword, but the more common convention is to use the ellipsis (`...`) literal
+  - at runtime, the variants are completely ignored - overridden by the final implementation function
+- An overloaded function is still an ordinary Python function
+  - no automatic dispatch handling
+  - you must manually handle the different types in the implementation (e.g. by using `if` statements and `isinstance` checks)
+
+#### Type checking calls to overloads
+
+- See [`type_checking_calls.py`](ch15/type_checking_calls.py)
+- When you call an overloaded function, mypy will infer the correct return type by picking the best matching variant
+  - after taking into consideration both the argument types and arity
+  - a call is never type checked against the implementation
+- If there are multiple equally good matching variants, mypy will select the variant that was defined first
+  - make sure your overload variants are listed in the same order as the runtime checks (e.g. `isinstance` checks) in your implementation
+  - order your variants and runtime checks from most to least specific
+- 2 exceptions to the "pick the first match" rule
+  - if multiple variants match due to an argument being of type `Any`, mypy will make the inferred type also be `Any`
+  - if multiple variants match due to one or more of the arguments being a union, mypy will make the inferred type be the union of the matching variant returns
+
+```python
+@overload
+def summarize(data: List[int]) -> float:
+    ...
+
+
+@overload
+def summarize(data: List[str]) -> str:
+    ...
+
+
+def summarize(data):
+    if not data:
+        return 0.0
+    elif isinstance(data[0], int):
+        # Do int specific code
+        ...
+    else:
+        # Do str-specific code
+        ...
+
+
+# What is the type of 'output'? float or str?
+output = summarize([])
+
+
+dynamic_var: Any
+output2 = summarize(dynamic_var)
+reveal_type(output2)  # output2 is of type 'Any'
+
+some_list: Union[List[int], List[str]]
+output3 = summarize(some_list)
+reveal_type(output3)  # output3 is of type 'Union[float, str]'
+```
+
+```console
+$ mypy --pretty --strict ch15/type_checking_calls.py
+ch15/type_checking_calls.py:33: note: Revealed type is 'Any'
+ch15/type_checking_calls.py:37: note: Revealed type is 'Union[builtins.float, builtins.str]'
+```
+
+#### Type checking the variants
+
+- See [`type_checking_variants.py`](ch15/type_checking_variants.py)
+- Mypy will perform several checks on your overload variant definitions to ensure they behave as expected
+- Mypy will check and make sure that no overload variant is _shadowing_ a subsequent one
+
+```python
+class Expression:
+    # ...snip...
+    ...
+
+
+class Literal(Expression):
+    # ...snip...
+    ...
+
+
+# Warning -- the first overload variant shadows the second!
+
+
+@overload
+def add(left: Expression, right: Expression) -> Expression:
+    ...
+
+
+@overload
+def add(left: Literal, right: Literal) -> Literal:
+    ...
+
+
+def add(left: Expression, right: Expression) -> Expression:
+    # ...snip...
+    ...
+```
+
+```console
+$ mypy --pretty --strict ch15/type_checking_variants.py
+ch15/type_checking_variants.py:25: error: Overloaded function signature 2 will
+never be matched: signature 1's parameter type(s) are the same or broader
+    def add(left: Literal, right: Literal) -> Literal:
+    ^
+```
+
+- Mypy will also type check the different variants and flag any overloads that have inherently unsafely overlapping variants
+  - mypy will detect and prohibit inherently unsafely overlapping overloads on a _best-effort_ basis
+  - 2 variants are considered unsafely overlapping when both of the following are true:
+    - all of the arguments of the first variant are compatible with the second
+    - the return type of the first variant is not compatible with (e.g. is not a subtype of) the second
+
+```python
+@overload
+def unsafe_func(x: int) -> int:
+    ...
+
+
+@overload
+def unsafe_func(x: object) -> str:
+    ...
+
+
+def unsafe_func(x: object) -> Union[int, str]:
+    if isinstance(x, int):
+        return 42
+    else:
+        return "some string"
+
+
+some_obj: object = 42
+x = unsafe_func(some_obj) + " danger danger"  # Type checks, yet crashes at runtime!
+reveal_type(x)
+```
+
+```console
+$ mypy --pretty --strict ch15/type_checking_variants.py
+ch15/type_checking_variants.py:35: error: Overloaded function signatures 1 and
+2 overlap with incompatible return types
+    def unsafe_func(x: int) -> int:
+    ^
+ch15/type_checking_variants.py:53: note: Revealed type is 'builtins.str'
+```
+
+#### Type checking the implementation
+
+- The body of an implementation is type-checked against the type hints provided on the implementation
+- If there are no annotations on the implementation, then the body is not type checked
+  - if you want to force mypy to check the body anyways, use the `--check-untyped-defs` flag
+- The variants must also also be compatible with the implementation type hints
+
+### Advanced uses of self-types
+
+- Normally, mypy doesn't require annotations for the first arguments of instance and class methods
+  - they may be needed to have more precise static typing for certain programming patterns
+
+#### Restricted methods in generic classes
+
+- See [`restricted_methods_generic.py`](ch15/restricted_methods_generic.py)
+- In generic classes some methods may be allowed to be called only for certain values of type arguments
+
+```python
+T = TypeVar("T")
+
+
+class Tag(Generic[T]):
+    item: T
+
+    def uppercase_item(self: Tag[str]) -> str:
+        return self.item.upper()
+
+
+def label(ti: Tag[int], ts: Tag[str]) -> None:
+    ti.uppercase_item()  # Error
+    ts.uppercase_item()  # This is OK
+```
+
+```console
+$ mypy --pretty --strict ch15/restricted_methods_generic.py
+ch15/restricted_methods_generic.py:16: error: Invalid self argument "Tag[int]"
+to attribute function "uppercase_item" with type "Callable[[Tag[str]], str]"
+        ti.uppercase_item()  # Error
+        ^
+```
+
+- This pattern also allows matching on nested types in situations where the type argument is itself generic
+
+```python
+T = TypeVar("T")
+S = TypeVar("S")
+
+
+class Storage(Generic[T]):
+    def __init__(self, content: T) -> None:
+        self.content = content
+
+    def first_chunk(self: Storage[Sequence[S]]) -> S:
+        return self.content[0]
+
+
+page: Storage[List[str]]
+page.first_chunk()  # OK, type is "str"
+Storage(0).first_chunk()  # Error
+```
+
+```console
+$ mypy --pretty --strict ch15/restricted_methods_generic.py
+ch15/restricted_methods_generic.py:33: error: Invalid self argument
+"Storage[int]" to attribute function "first_chunk" with type
+"Callable[[Storage[Sequence[S]]], S]"
+    Storage(0).first_chunk()  # Error
+    ^
+```
+
+- Note: mypy 0.770 also reports the following error although it is fine at runtime:
+
+```console
+$ mypy --pretty --strict ch15/restricted_methods_generic.py
+ch15/restricted_methods_generic.py:32: error: Invalid self argument
+"Storage[List[str]]" to attribute function "first_chunk" with type
+"Callable[[Storage[Sequence[S]]], S]"
+    page.first_chunk()  # OK, type is "str"
+    ^
+```
+
+- Finally, one can use overloads on self-type to express precise types of some tricky methods
+
+```python
+T = TypeVar("T")
+
+
+class Tag(Generic[T]):
+
+    @overload
+    def export(self: Tag[str]) -> str:
+        ...
+
+    @overload
+    def export(self, converter: Callable[[T], str]) -> str:
+        ...
+
+    def export(self, converter=None):
+        if isinstance(self.item, str):
+            return self.item
+        return converter(self.item)
+```
+
+#### Mixin classes
+
+- See [`mixin_classes.py`](ch15/mixin_classes.py)
+- Using host class protocol as a self-type in mixin methods allows more code re-usability for static typing of mixin classes
+- E.g., one can define a protocol that defines common functionality for host classes instead of adding required abstract methods to every mixin
+- Note that the explicit self-type is _required_ to be a protocol whenever it is not a supertype of the current class
+  - in this case mypy will check the validity of the self-type only at the call site
+
+```python
+class Lockable(Protocol):
+    @property
+    def lock(self) -> Lock:
+        ...
+
+
+class AtomicCloseMixin:
+    def atomic_close(self: Lockable) -> int:
+        with self.lock:
+            # perform actions
+            ...
+
+
+class AtomicOpenMixin:
+    def atomic_open(self: Lockable) -> int:
+        with self.lock:
+            # perform actions
+            ...
+
+
+class File(AtomicCloseMixin, AtomicOpenMixin):
+    def __init__(self) -> None:
+        self.lock = Lock()
+
+
+class Bad(AtomicCloseMixin):
+    pass
+
+
+f = File()
+b: Bad
+f.atomic_close()  # OK
+b.atomic_close()  # Error: Invalid self type for "atomic_close"
+```
+
+```console
+$ mypy --pretty --strict ch15/mixin_classes.py
+ch15/mixin_classes.py:38: error: Invalid self argument "Bad" to attribute
+function "atomic_close" with type "Callable[[Lockable], int]"
+    b.atomic_close()  # Error: Invalid self type for "atomic_close"
+    ^
+```
+
+#### Precise typing of alternative constructors
+
+- See [`alternative_constructors.py`](ch15/alternative_constructors.py)
+- Some classes may define alternative constructors
+- If these classes are generic, self-type allows giving them precise signatures
+
+```python
+T = TypeVar("T")
+
+
+class Base(Generic[T]):
+    Q = TypeVar("Q", bound="Base[T]")
+
+    def __init__(self, item: T) -> None:
+        self.item = item
+
+    @classmethod
+    def make_pair(cls: Type[Q], item: T) -> Tuple[Q, Q]:
+        return cls(item), cls(item)
+
+
+class Sub(Base[T]):
+    ...
+
+
+pair = Sub.make_pair("yes")  # Type is "Tuple[Sub[str], Sub[str]]"
+reveal_type(pair)
+bad = Sub[int].make_pair("no")  # Error
+```
+
+```console
+$ mypy --pretty --strict ch15/alternative_constructors.py
+ch15/alternative_constructors.py:24: note: Revealed type is 'Tuple[alternative_constructors.Sub[builtins.str*], alternative_constructors.Sub[builtins.str*]]'
+ch15/alternative_constructors.py:25: error: Argument 1 to "make_pair" of "Base"
+has incompatible type "str"; expected "int"
+    bad = Sub[int].make_pair("no")  # Error
+                             ^
+```
+
+### Typing `async`/`await`
+
+- See [`async_await.py`](ch15/async_await.py)
+- Mypy supports the ability to type coroutines that use the `async/await` syntax introduced in Python 3.5
+- Functions defined using `async def` are typed just like normal functions
+  - the return type annotation should be the same as the type of the value you expect to get back when `await`-ing the coroutine
+- The result of calling an `async def` function without awaiting will be a value of type `Coroutine[Any, Any, T]`, which is a subtype of `Awaitable[T]`
+
+```python
+async def format_string(tag: str, count: int) -> str:
+    return "T-minus {} ({})".format(count, tag)
+
+
+async def countdown_1(tag: str, count: int) -> str:
+    while count > 0:
+        my_str = await format_string(tag, count)  # has type 'str'
+        print(my_str)
+        await asyncio.sleep(0.1)
+        count -= 1
+    return "Blastoff!"
+
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(countdown_1("Millennium Falcon", 5))
+loop.close()
+
+my_coroutine = countdown_1("Millennium Falcon", 5)
+reveal_type(my_coroutine)  # has type 'Coroutine[Any, Any, str]'
+```
+
+- You may also choose to create a subclass of `Awaitable` instead
+
+```python
+class MyAwaitable(Awaitable[str]):
+    def __init__(self, tag: str, count: int) -> None:
+        self.tag = tag
+        self.count = count
+
+    def __await__(self) -> Generator[Any, None, str]:
+        for i in range(self.count, 0, -1):
+            print("T-minus {} ({})".format(i, self.tag))
+            yield from asyncio.sleep(0.1)
+        return "Blastoff!"
+
+
+def countdown_3(tag: str, count: int) -> Awaitable[str]:
+    return MyAwaitable(tag, count)
+
+
+loop3 = asyncio.get_event_loop()
+loop3.run_until_complete(countdown_3("Heart of Gold", 5))
+loop3.close()
+```
+
+- To create an iterable coroutine, subclass `AsyncIterator`
+
+```python
+class arange(AsyncIterator[int]):
+    def __init__(self, start: int, stop: int, step: int) -> None:
+        self.start = start
+        self.stop = stop
+        self.step = step
+        self.count = start - step
+
+    def __aiter__(self) -> AsyncIterator[int]:
+        return self
+
+    async def __anext__(self) -> int:
+        self.count += self.step
+        if self.count == self.stop:
+            raise StopAsyncIteration
+        else:
+            return self.count
+
+
+async def countdown_4(tag: str, n: int) -> str:
+    async for i in arange(n, 0, -1):
+        print("T-minus {} ({})".format(i, tag))
+        await asyncio.sleep(0.1)
+    return "Blastoff!"
+
+
+loop4 = asyncio.get_event_loop()
+loop4.run_until_complete(countdown_4("Serenity", 5))
+loop4.close()
+```
+
+### `TypedDict`
+
+- See [`typeddict.py`](ch15/typeddict.py)
+- You can use a `TypedDict` to give a precise type for objects, where the type of each dictionary value depends on the key
+
+```python
+Movie = TypedDict("Movie", {"name": str, "year": int})
+movie: Movie = {"name": "Blade Runner", "year": 1982}
+```
+
+- Note that we used an explicit type annotation for the `movie` variable
+  - without it, mypy will try to infer a regular, uniform `Dict` type for `movie`
+- If you pass a `TypedDict` object as an argument to a function, no type annotation is usually necessary since mypy can infer the desired type based on the declared argument type
+- If an assignment target has been previously defined, and it has a `TypedDict` type, mypy will treat the assigned value as a `TypedDict`, not `Dict`
+- Mypy will detect an invalid key as an error
+- Mypy will also reject a runtime-computed expression as a key, as it can't verify that it's a valid key
+  - you can only use string literals as `TypedDict` keys
+
+```python
+movie_bad: Movie = {"name": "Blade Runner", "year": 1982, "director": "Scott"}
+director = movie_bad["director"]
+```
+
+```console
+$ mypy --pretty --strict ch15/typeddict.py
+ch15/typeddict.py:8: error: Extra key 'director' for TypedDict "Movie"
+    movie_bad: Movie = {"name": "Blade Runner", "year": 1982, "director": ...
+                       ^
+ch15/typeddict.py:9: error: TypedDict "Movie" has no key 'director'
+    director = movie_bad["director"]
+                         ^
+```
+
+- The `TypedDict` type object can also act as a constructor
+  - returns a normal `dict` object at runtime
+  - a `TypedDict` does not define a new runtime type
+  - equivalent to just constructing a dictionary directly using `{ ... }` or `dict(key=value, ...)`
+  - convenient, since it can be used without a type annotation, and makes the type of the object explicit
+
+```python
+toy_story = Movie(name="Toy Story", year=1995)
+```
+
+- Like all types, `TypedDict`s can be used as components to build arbitrarily complex types
+  - you can define nested `TypedDict`s and containers with `TypedDict` items
+  - unlike most other types, mypy uses structural compatibility checking (or structural subtyping) with `TypedDict`s
+    - a `TypedDict` object with extra items is compatible with (a subtype of) a narrower `TypedDict`
+      - assuming item types are compatible
+      - _totality_ also affects subtyping (see below)
+- A `TypedDict` object is not a subtype of the regular `Dict[...]` type (and vice versa)
+  - `Dict` allows arbitrary keys to be added and removed, unlike `TypedDict`
+- Any `TypedDict` object is a subtype of (i.e., compatible with) `Mapping[str, object]`
+  - `Mapping` only provides read-only access to the dictionary items
+
+#### Totality
+
+- By default mypy ensures that a `TypedDict` object has all the specified keys
+
+```python
+toy_story_2: Movie = {"name": "Toy Story 2"}
+```
+
+```console
+$ mypy --pretty --strict ch15/typeddict.py
+ch15/typeddict.py:13: error: Key 'year' missing for TypedDict "Movie"
+    toy_story_2: Movie = {"name": "Toy Story 2"}
+                         ^
+```
+
+- Sometimes you want to allow keys to be left out when creating a `TypedDict` object
+  - provide the `total=False` argument to `TypedDict(...)`
+
+```python
+GuiOptions = TypedDict("GuiOptions", {"language": str, "color": str}, total=False)
+options: GuiOptions = {}
+options["language"] = "en"
+```
+
+- You may need to use `get()` to access items of a partial (non-total) `TypedDict`, since indexing using `[]` could fail at runtime
+
+```python
+print(options["color"])  # KeyError
+print(options.get("color"))  # None
+```
+
+- Keys that aren't required are shown with a `?`
+
+```python
+reveal_type(options)
+```
+
+```console
+$ mypy --pretty --strict ch15/typeddict.py
+ch15/typeddict.py:22: note: Revealed type is 'TypedDict('typeddict.GuiOptions', {'language'?: builtins.str, 'color'?: builtins.str})'
+```
+
+- Totality also affects structural compatibility
+  - you can't use a partial `TypedDict` when a total one is expected
+  - a total `TypedDict` is not valid when a partial one is expected
+
+#### Supported operations
+
+- `TypedDict` objects support a _subset_ of dictionary operations and methods
+  - anything included in `Mapping`:
+    - `d[key]`
+    - `key in d`
+    - `len(d)`
+    - `for key in d` (iteration)
+    - `d.get(key[, default])`
+    - `d.keys()`
+    - `d.values()`
+    - `d.items()`
+  - `d.copy()`
+  - `d.setdefault(key, default)`
+  - `d1.update(d2)`
+  - `d.pop(key[, default])` (partial `TypedDicts` only)
+  - `del d[key]` (partial `TypedDicts` only)
+- `clear()` and `popitem()` are not supported since they are unsafe
+  - they could delete required `TypedDict` items that are not visible to mypy because of structural subtyping
+
+#### Class-based syntax
+
+- An alternative, class-based syntax to define a `TypedDict` is supported in Python 3.6 and later
+
+```python
+class MovieClassBased(TypedDict):
+    name: str
+    year: int
+```
+
+- Equivalent to the original `Movie` definition
+- Doesn't actually define a real class
+- Also supports a form of inheritance
+  - subclasses can define additional items
+  - primarily a notational shortcut
+    - since mypy uses structural compatibility with `TypedDicts`, inheritance is not required for compatibility
+
+```python
+class BookBasedMovie(MovieClassBased):
+    based_on: str
+
+
+book_based_movie = BookBasedMovie(
+    name="The Social Network", year=2010, based_on="The Accidental Billionaires"
+)
+print(book_based_movie["name"])
+print(book_based_movie.based_on)  # Error
+```
+
+#### Mixing required and non-required items
+
+- Inheritance also allows you to mix required and non-required (using `total=False`) items in a single `TypedDict`
+
+```python
+class MovieBase(TypedDict):
+    name: str
+    year: int
+
+class Movie(MovieBase, total=False):
+    based_on: str
+```
+
+- `based_on` can be left out when constructing an object
+- A `TypedDict` with a mix of required and non-required keys will only be compatible with another `TypedDict` if the keys' "required"ness match between the `TypedDict`s
+
+#### Unions of `TypedDict`s
+
+- It is not possible to use `isinstance` checks to distinguish between different variants of a `Union` of `TypedDict` in the same way you can with regular objects
+  - `TypedDict`s are really just regular `dict`s at runtime
+  - you can use the [tagged union pattern](#tagged-unions) instead
+
 ## Sources
 
-- "Welcome to Mypy Documentation!" _Mypy Documentation_, mypy.readthedocs.io/en/stable/index.html.
-- van Rossum, Guido, and Ivan Levkivskyi. "PEP 483 -- The Theory of Type Hints." _Python.org_, 19 Dec. 2014, www.python.org/dev/peps/pep-0483/.
+- "Welcome to Mypy Documentation!" _Mypy Documentation_, [mypy.readthedocs.io/en/stable/index.html](https://mypy.readthedocs.io/en/stable/index.html).
+- van Rossum, Guido, and Ivan Levkivskyi. "PEP 483 -- The Theory of Type Hints." _Python.org_, 19 Dec. 2014, [www.python.org/dev/peps/pep-0483/](https://www.python.org/dev/peps/pep-0483/).
