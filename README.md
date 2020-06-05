@@ -113,6 +113,10 @@
       - [Details of using `Final`](#details-of-using-final)
     - [Final methods](#final-methods)
     - [Final classes](#final-classes)
+  - [18 Metaclasses](#18-metaclasses)
+    - [Defining a metaclass](#defining-a-metaclass)
+    - [Metaclass usage example](#metaclass-usage-example)
+    - [Gotchas and limitations of metaclass support](#gotchas-and-limitations-of-metaclass-support)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -3862,7 +3866,7 @@ class Derived(Base):
 ```
 
 ```console
-$ mypy --pretty --strict ch17/final_methods.py 
+$ mypy --pretty --strict ch17/final_methods.py
 ch17/final_methods.py:13: error: Cannot override final attribute "common_name"
 (previously declared in base class "Base")
         def common_name(self) -> None:  # Error
@@ -3911,13 +3915,117 @@ class A(metaclass=ABCMeta):  # Error
 ```
 
 ```console
-$ mypy --pretty --strict ch17/final_classes.py 
+$ mypy --pretty --strict ch17/final_classes.py
 ch17/final_classes.py:12: error: Cannot inherit from final class "Leaf"
     class MyLeaf(Leaf):  # Error
     ^
 ch17/final_classes.py:17: error: Final class final_classes.A has abstract
 attributes "f"
     class A(metaclass=ABCMeta):  # Error
+    ^
+```
+
+## 18 Metaclasses
+
+- See [`metaclasses.py`](ch18/metaclasses.py)
+- A [metaclass](https://docs.python.org/3/reference/datamodel.html#metaclasses) is a class that describes the construction and behavior of other classes
+  - similar to how classes describe the construction and behavior of objects
+- The default metaclass is `type`, but it’s possible to use other metaclasses
+- Metaclasses allows one to create "a different kind of class", such as `Enum`s, `NamedTuple`s and singletons
+- Mypy has some special understanding of `ABCMeta` and `EnumMeta`
+
+### Defining a metaclass
+
+```python
+class M(type):
+    pass
+
+
+class A(metaclass=M):
+    pass
+```
+
+- Mypy also supports using `six.with_metaclass()` and `@six.add_metaclass` to define metaclass in a portable way
+
+### Metaclass usage example
+
+- Mypy supports the lookup of attributes in the metaclass
+
+```python
+T = TypeVar("T")
+
+
+class M(type):
+    count: ClassVar[int] = 0
+
+    def make(cls: Type[T]) -> T:
+        M.count += 1
+        return cls()
+
+
+class A(metaclass=M):
+    pass
+
+
+a: A = A.make()  # make() is looked up at M; the result is an object of type A
+print(A.count)
+
+
+class B(A):
+    pass
+
+
+b: B = B.make()  # metaclasses are inherited
+print(B.count)
+```
+
+```console
+$ python ch18/metaclasses.py
+1
+2
+```
+
+### Gotchas and limitations of metaclass support
+
+- Metaclasses pose some requirements on the inheritance structure, so it's better not to combine metaclasses and class hierarchies
+- Mypy does not understand dynamically-computed metaclasses, such as `class A(metaclass=f()): ...`
+- Mypy does not understand arbitrary metaclass code
+- Mypy only recognizes subclasses of `type` as potential metaclasses
+
+```python
+class M1(type):
+    pass
+
+
+class M2(type):
+    pass
+
+
+class A1(metaclass=M1):
+    pass
+
+
+class A2(metaclass=M2):
+    pass
+
+
+class B1(A1, metaclass=M2):
+    pass  # Error
+
+
+# At runtime the above definition raises an exception
+# TypeError: metaclass conflict: the metaclass of a derived class must be a
+# (non-strict) subclass of the metaclasses of all its bases
+
+# Same runtime error as in B1, but mypy does not catch it yet
+class B12(A1, A2):
+    pass
+```
+
+```console
+$ mypy --pretty --strict ch18/metaclasses.py
+ch18/metaclasses.py:49: error: Inconsistent metaclass structure for 'B1'
+    class B1(A1, metaclass=M2):
     ^
 ```
 
