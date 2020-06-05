@@ -101,6 +101,12 @@
       - [Class-based syntax](#class-based-syntax)
       - [Mixing required and non-required items](#mixing-required-and-non-required-items)
       - [Unions of `TypedDict`s](#unions-of-typeddicts)
+  - [16. Literal types](#16-literal-types)
+    - [Parameterizing Literals](#parameterizing-literals)
+    - [Declaring literal variables](#declaring-literal-variables)
+    - [Intelligent indexing](#intelligent-indexing)
+    - [Tagged unions](#tagged-unions)
+    - [Limitations](#limitations)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -3426,6 +3432,296 @@ class Movie(MovieBase, total=False):
 - It is not possible to use `isinstance` checks to distinguish between different variants of a `Union` of `TypedDict` in the same way you can with regular objects
   - `TypedDict`s are really just regular `dict`s at runtime
   - you can use the [tagged union pattern](#tagged-unions) instead
+
+## 16. Literal types
+
+- See [`literal_types.py`](ch16/literal_types.py)
+- Literal types let you indicate that an expression is equal to some _specific primitive value_
+- Useful when annotating functions that behave differently based on the exact value the caller provides
+
+```python
+# The first two overloads use Literal[...] so we can have precise return types.
+
+
+@overload
+def fetch_data(raw: Literal[True]) -> bytes:
+    ...
+
+
+@overload
+def fetch_data(raw: Literal[False]) -> str:
+    ...
+
+
+# The last overload is a fallback in case the caller provides a regular bool.
+
+
+@overload
+def fetch_data(raw: bool) -> Union[bytes, str]:
+    ...
+
+
+def fetch_data(raw: bool) -> Union[bytes, str]:
+    # Implementation is omitted
+    ...
+
+
+reveal_type(fetch_data(True))  # Revealed type is 'bytes'
+reveal_type(fetch_data(False))  # Revealed type is 'str'
+
+# Variables declared without annotations will continue to have an inferred type of
+# 'bool'.
+
+variable = True
+reveal_type(fetch_data(variable))  # Revealed type is 'Union[bytes, str]'
+```
+
+```console
+$ mypy --pretty --strict ch16/literal_types.py
+ch16/literal_types.py:31: note: Revealed type is 'builtins.bytes'
+ch16/literal_types.py:32: note: Revealed type is 'builtins.str'
+ch16/literal_types.py:38: note: Revealed type is 'Union[builtins.bytes, builtins.str]'
+```
+
+### Parameterizing Literals
+
+- See [`parameterizing_literals.py`](ch16/parameterizing_literals.py)
+- May contain one or more literal `bool`s, `int`s, `str`s, `bytes`, and `enum` values
+- Cannot contain arbitrary expressions
+  - types like `Literal[my_string.trim()]`, `Literal[x > 3]`, or `Literal[3j + 4]` are all illegal
+- Literals containing two or more values are equivalent to the union of those values
+  - `Literal[-3, b"foo", MyEnum.A]` is equivalent to `Union[Literal[-3], Literal[b"foo"], Literal[MyEnum.A]]`
+- May contain `None`
+  - equivalent to just `None`
+  - `Literal[4, None]`, `Union[Literal[4], None]`, and `Optional[Literal[4]]` are all equivalent
+- May also contain aliases to other literal types
+- May not contain any other kind of type or expression
+  - `Literal[my_instance]`, `Literal[Any]`, `Literal[3.14]`, or `Literal[{"foo": 2, "bar": 5}]` are all illegal
+
+```python
+PrimaryColors = Literal["red", "blue", "yellow"]
+SecondaryColors = Literal["purple", "green", "orange"]
+AllowedColors = Literal[PrimaryColors, SecondaryColors]
+
+
+def paint(color: AllowedColors) -> None:
+    ...
+
+
+paint("red")  # Type checks!
+paint("turquoise")  # Does not type check
+```
+
+```console
+$ mypy --pretty --strict ch16/parameterizing_literals.py
+ch16/parameterizing_literals.py:15: error: Argument 1 to "paint" has
+incompatible type "Literal['turquoise']"; expected
+"Union[Literal['red'], Literal['blue'], Literal['yellow'], Literal['purple'], Literal['green'], Literal['orange']]"
+    paint("turquoise")  # Does not type check
+          ^
+```
+
+### Declaring literal variables
+
+- See [`literal_vars.py`](ch16/literal_vars.py)
+- You must explicitly add an annotation to a variable to declare that it has a literal type
+
+```python
+a: Literal[19] = 19
+reveal_type(a)  # Revealed type is 'Literal[19]'
+```
+
+- You can instead change the variable to be `Final`
+  - see [Final names, methods and classes](#17-final-names-methods-and-classes)
+
+```python
+def expects_literal(x: Literal[19]) -> None:
+    pass
+
+
+c: Final = 19
+
+reveal_type(c)  # Revealed type is 'Literal[19]?'
+expects_literal(c)  # ...and this type checks!
+```
+
+```console
+$ mypy --pretty --strict ch16/literal_vars.py
+ch16/literal_vars.py:12: note: Revealed type is 'Literal[19]?'
+```
+
+- If you do not provide an explicit type in the `Final`, the type of `c` becomes context-sensitive
+  - mypy will basically try "substituting" the original assigned value whenever it's used before performing type checking
+  - `Literal[19]?`: the question mark at the end reflects this context-sensitive nature
+- The main cases where the behavior of context-sensitive vs true literal types differ are when you try using those types in places that are not explicitly expecting a `Literal[...]`
+
+```python
+a: Final = 19
+
+# Mypy will infer List[int] here.
+list_of_ints = []
+list_of_ints.append(a)
+reveal_type(list_of_ints)  # Revealed type is 'List[int]'
+
+b: Literal[19] = 19
+
+# mypy # will infer List[Literal[19]].
+list_of_lits = []
+list_of_lits.append(b)
+reveal_type(list_of_lits)  # Revealed type is 'List[Literal[19]]'
+```
+
+```console
+$ mypy --pretty --strict ch16/literal_vars.py
+ch16/literal_vars.py:21: note: Revealed type is 'builtins.list[builtins.int]'
+ch16/literal_vars.py:28: note: Revealed type is 'builtins.list[Literal[19]]'
+```
+
+### Intelligent indexing
+
+- See [`intelligent_indexing.py`](ch16/intelligent_indexing.py)
+- We can use `Literal` types to more precisely index into structured heterogeneous types such as tuples, `NamedTuple`s, and `TypedDict`s
+  - intelligent indexing
+  - e.g., when we index into a tuple using some `int`, the inferred type is normally the union of the tuple item types
+    - if we want just the type corresponding to some particular index, we can use `Literal` types
+
+```python
+tup = ("foo", 3.4)
+
+# Indexing with an int literal gives us the exact type for that index
+reveal_type(tup[0])  # Revealed type is 'str'
+
+# If the index to be a variable, normally mypy won't # know exactly what the index is
+# and so will return a less precise type:
+int_index = 1
+reveal_type(tup[int_index])  # Revealed type is 'Union[str, float]'
+
+# But if we use either Literal types or a Final int, we can gain back # the precision
+# we originally had:
+lit_index: Literal[1] = 1
+fin_index: Final = 1
+reveal_type(tup[lit_index])  # Revealed type is 'float'
+reveal_type(tup[fin_index])  # Revealed type is 'float'
+
+# We can do the same thing with with TypedDict and str keys:
+class MyDict(TypedDict):
+    name: str
+    main_id: int
+    backup_id: int
+
+
+d: MyDict = {"name": "Saanvi", "main_id": 111, "backup_id": 222}
+
+name_var = "name"
+reveal_type(d[name_var])  # Error
+reveal_type(d.get(name_var))  # Revealed type is 'object*'
+
+name_key: Final = "name"
+reveal_type(d[name_key])  # Revealed type is 'str'
+reveal_type(d.get(name_key))  # Revealed type is 'Union[str, None]'
+
+# You can also index using unions of literals
+id_key: Literal["main_id", "backup_id"]
+reveal_type(d[id_key])  # Revealed type is 'int'
+```
+
+```console
+$ mypy --pretty --strict ch16/intelligent_indexing.py
+ch16/intelligent_indexing.py:8: note: Revealed type is 'builtins.str'
+ch16/intelligent_indexing.py:13: note: Revealed type is 'Union[builtins.str, builtins.float]'
+ch16/intelligent_indexing.py:19: note: Revealed type is 'builtins.float'
+ch16/intelligent_indexing.py:20: note: Revealed type is 'builtins.float'
+ch16/intelligent_indexing.py:32: note: Revealed type is 'Any'
+ch16/intelligent_indexing.py:32: error: TypedDict key must be a string literal;
+expected one of ('name', 'main_id', 'backup_id')
+    reveal_type(d[name_var])  # Error
+                  ^
+ch16/intelligent_indexing.py:33: note: Revealed type is 'builtins.object*'
+ch16/intelligent_indexing.py:36: note: Revealed type is 'builtins.str'
+ch16/intelligent_indexing.py:37: note: Revealed type is 'Union[builtins.str, None]'
+ch16/intelligent_indexing.py:41: note: Revealed type is 'builtins.int'
+```
+
+### Tagged unions
+
+- See [`tagged_unions.py`](ch16/tagged_unions.py)
+- When you have a union of types, you can normally discriminate between each type in the union by using `isinstance` checks
+  - e.g., if you had a variable `x` of type `Union[int, str]`, you could write some code that runs only if `x` is an `int` by doing `if isinstance(x, int): ....`
+- It is not always possible or convenient to do this
+  - e.g., it is not possible to use `isinstance` to distinguish between two different `TypedDict`s since at runtime, your variable will simply be just a `dict`
+  - you can _label_ or _tag_ your `TypedDict`s with a distinct `Literal` type
+    - you can then discriminate between each kind of `TypedDict` by checking the label
+  - you can also use the same technique wih regular objects, tuples, or namedtuples
+
+```python
+class NewJobEvent(TypedDict):
+    tag: Literal["new-job"]
+    job_name: str
+    config_file_path: str
+
+
+class CancelJobEvent(TypedDict):
+    tag: Literal["cancel-job"]
+    job_id: int
+
+
+Event = Union[NewJobEvent, CancelJobEvent]
+
+
+def process_event(event: Event) -> None:
+    # Since we made sure both TypedDicts have a key named 'tag', it's safe to do
+    # 'event["tag"]'. This expression normally has the type Literal["new-job",
+    # "cancel-job"], but the check below will narrow the type to either
+    # Literal["new-job"] or Literal["cancel-job"].
+    #
+    # This in turns narrows the type of 'event' to either NewJobEvent or CancelJobEvent.
+    if event["tag"] == "new-job":
+        print(event["job_name"])
+    else:
+        print(event["job_id"])
+```
+
+- Tags do not need to be specifically `str` `Literal`s
+  - they can be any type you can normally narrow within `if` statements and the like
+  - e.g., you could have your tags be `int` or `Enum` `Literal`s or even regular classes you narrow using `isinstance()`
+  - this feature is sometimes called "sum types" or "discriminated union types" in other programming languages
+
+```python
+T = TypeVar("T")
+
+
+class Wrapper(Generic[T]):
+    def __init__(self, inner: T) -> None:
+        self.inner = inner
+
+
+def process(w: Union[Wrapper[int], Wrapper[str]]) -> None:
+    # Doing `if isinstance(w, Wrapper[int])` does not work: isinstance requires that
+    # the second argument always be an *erased* type, with no generics. This is because
+    # generics are a typing-only concept and do not exist at runtime in a way
+    # `isinstance` can always check.
+    #
+    # However, we can side-step this by checking the type of `w.inner` to narrow `w`
+    # itself:
+    if isinstance(w.inner, int):
+        reveal_type(w)  # Revealed type is 'Wrapper[int]'
+    else:
+        reveal_type(w)  # Revealed type is 'Wrapper[str]'
+```
+
+```console
+$ mypy --pretty --strict ch16/tagged_unions.py
+ch16/tagged_unions.py:50: note: Revealed type is 'tagged_unions.Wrapper[builtins.int]'
+ch16/tagged_unions.py:52: note: Revealed type is 'tagged_unions.Wrapper[builtins.str]'
+```
+
+### Limitations
+
+- Mypy will not understand expressions that use variables of type `Literal[..]` on a deep level
+  - e.g., if you have a variable `a` of type `Literal[3]` and another variable `b` of type `Literal[5]`, mypy will infer that `a + b` has type `int`, not type `Literal[8]`
+- The basic rule is that literal types are treated as just regular subtypes of whatever type the parameter has
+  - e.g., `Literal[3]` is treated as a subtype of `int` and so will inherit all of `int`'s methods directly
+    - this means that `Literal[3].__add__` accepts the same arguments and has the same return type as `int.__add__`
 
 ## Sources
 
