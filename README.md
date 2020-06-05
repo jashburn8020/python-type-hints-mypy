@@ -107,6 +107,12 @@
     - [Intelligent indexing](#intelligent-indexing)
     - [Tagged unions](#tagged-unions)
     - [Limitations](#limitations)
+  - [17. Final names, methods and classes](#17-final-names-methods-and-classes)
+    - [Final names](#final-names)
+      - [Syntax variants](#syntax-variants)
+      - [Details of using `Final`](#details-of-using-final)
+    - [Final methods](#final-methods)
+    - [Final classes](#final-classes)
   - [Sources](#sources)
 
 ## 1. Introduction
@@ -3722,6 +3728,198 @@ ch16/tagged_unions.py:52: note: Revealed type is 'tagged_unions.Wrapper[builtins
 - The basic rule is that literal types are treated as just regular subtypes of whatever type the parameter has
   - e.g., `Literal[3]` is treated as a subtype of `int` and so will inherit all of `int`'s methods directly
     - this means that `Literal[3].__add__` accepts the same arguments and has the same return type as `int.__add__`
+
+## 17. Final names, methods and classes
+
+### Final names
+
+- See [`final_names.py`](ch17/final_names.py)
+- You can use the `Final` qualifier to indicate that a name or attribute should not be reassigned, redefined, or overridden
+  - useful for module and class level constants as a way to prevent unintended modification
+  - another use case is to protect certain attributes from being overridden in a subclass
+
+```python
+RATE: Final = 3000
+
+
+class Base:
+    DEFAULT_ID: Final = 0
+
+
+RATE = 300  # Error
+Base.DEFAULT_ID = 1  # Error
+
+
+class Window:
+    BORDER_WIDTH: Final = 2.5
+    ...
+
+
+class ListView(Window):
+    BORDER_WIDTH = 3  # Error
+```
+
+```console
+$ mypy --pretty --strict ch17/final_names.py
+ch17/final_names.py:12: error: Cannot assign to final name "RATE"
+    RATE = 300  # Error
+    ^
+ch17/final_names.py:13: error: Cannot assign to final attribute "DEFAULT_ID"
+    Base.DEFAULT_ID = 1  # Error
+    ^
+ch17/final_names.py:22: error: Cannot assign to final name "BORDER_WIDTH"
+        BORDER_WIDTH = 3  # Error
+        ^
+```
+
+- You can use [`@property`](https://docs.python.org/3/library/functions.html#property) to make an attribute read-only
+  - unlike `Final`, it doesn't work with module attributes, and it doesn't prevent overriding in subclasses
+
+#### Syntax variants
+
+- `ID: Final[float] = 1`
+  - an explicit type using the syntax `Final[<type>]`
+- `ID: Final = 1`
+  - omit the type
+  - here mypy will infer type `int` for `ID`
+  - unlike for generic classes this is not the same as `Final[Any]`
+- `ID: Final[float]`
+  - in class bodies and stub files you can omit the right hand side
+- `self.id: Final = 1` (optionally with a type in square brackets)
+  - allowed only in `__init__` methods
+  - the final instance attribute is assigned only once when an instance is created
+
+#### Details of using `Final`
+
+- 2 main rules for defining a final name:
+  - there can be at most one final declaration per module or class for a given attribute
+    - can't be separate class-level and instance-level constants with the same name
+  - there must be exactly one assignment to a final name
+- A final attribute declared in a class body without an initializer must be initialized in the `__init__` method
+
+```python
+class ImmutablePoint:
+    x: Final[int]
+    y: Final[int]  # Error: final attribute without an initializer
+
+    def __init__(self) -> None:
+        self.x = 1
+```
+
+```console
+$ mypy --pretty --strict ch17/final_names.py
+ch17/final_names.py:27: error: Final name must be initialized with a value
+        y: Final[int]  # Error: final attribute without an initializer
+        ^
+```
+
+- `Final` can only be used as the outermost type in assignments or variable annotations
+  - using it in any other position is an error
+  - `Final` can't be used in annotations for function arguments
+
+```python
+x: List[Final[int]] = []  # Error!
+
+
+def fun(x: Final[List[int]]) -> None:  # Error!
+    ...
+```
+
+```console
+$ mypy --pretty --strict ch17/final_names.py
+ch17/final_names.py:33: error: Final can be only used as an outermost qualifier
+in a variable annotation
+    x: List[Final[int]] = []  # Error!
+            ^
+ch17/final_names.py:36: error: Final can be only used as an outermost qualifier
+in a variable annotation
+    def fun(x: Final[List[int]]) -> None:  # Error!
+               ^
+```
+
+- `Final` and `ClassVar` should not be used together
+  - mypy will infer the scope of a final declaration automatically depending on whether it was initialized in the class body or in `__init__`
+- Declaring a name as final only guarantees that the name will not be re-bound to another value
+  - doesn't make the value immutable
+  - you can use immutable ABCs and containers to prevent mutating such values
+
+### Final methods
+
+- See [`final_methods.py`](ch17/final_methods.py)
+- You can use the `final` decorator to protect a method from overriding
+  - can be used with instance methods, class methods, static methods, and properties
+
+```python
+class Base:
+    @final
+    def common_name(self) -> None:
+        ...
+
+
+class Derived(Base):
+    def common_name(self) -> None:  # Error
+        ...
+```
+
+```console
+$ mypy --pretty --strict ch17/final_methods.py 
+ch17/final_methods.py:13: error: Cannot override final attribute "common_name"
+(previously declared in base class "Base")
+        def common_name(self) -> None:  # Error
+        ^
+```
+
+- For overloaded methods you should add `@final` on the implementation to make it final (or on the first overload in stubs)
+
+```python
+class OverloadMethod:
+    @overload
+    def method(self) -> None:
+        ...
+
+    @overload
+    def method(self, arg: int) -> int:
+        ...
+
+    @final
+    def method(self, x=None):
+        ...
+```
+
+### Final classes
+
+- See [`final_classes.py`](ch17/final_classes.py)
+- You can apply the `final` decorator to a class to indicate to mypy that it should not be subclassed
+- An abstract class that defines at least one abstract method or property and has `@final` decorator will generate an error from mypy
+  - those attributes could never be implemented
+
+```python
+@final
+class Leaf:
+    ...
+
+
+class MyLeaf(Leaf):  # Error
+    ...
+
+
+@final
+class A(metaclass=ABCMeta):  # Error
+    @abstractmethod
+    def f(self, x: int) -> None:
+        pass
+```
+
+```console
+$ mypy --pretty --strict ch17/final_classes.py 
+ch17/final_classes.py:12: error: Cannot inherit from final class "Leaf"
+    class MyLeaf(Leaf):  # Error
+    ^
+ch17/final_classes.py:17: error: Final class final_classes.A has abstract
+attributes "f"
+    class A(metaclass=ABCMeta):  # Error
+    ^
+```
 
 ## Sources
 
