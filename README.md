@@ -126,9 +126,10 @@
 - To install and run the examples locally:
   1. install Pipenv (see <https://github.com/jashburn8020/getting-started/tree/master/python#pipenv>)
   2. clone this repo into a directory
-  3. install dependencies by running pipenv install
+  3. install dependencies by running `pipenv install`
      - strictly speaking, you only need to install the mypy package
-  4. run mypy with the individual .py files as indicated in the example console outputs below
+  4. activate the virtual environment by running `pipenv shell`
+  5. run mypy with the individual `.py` files as indicated in the example console outputs below
 
 ## 1. Introduction
 

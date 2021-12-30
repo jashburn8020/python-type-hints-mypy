@@ -8,9 +8,9 @@ name = "pypi"
 [dev-packages]
 pylint = "*"
 flake8 = "*"
-mypy = "*"
 pydocstyle = "*"
 black = "*"
+mypy = "*"
 
 [requires]
 python_version = "3.8"
