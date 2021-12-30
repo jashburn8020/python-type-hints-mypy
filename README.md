@@ -1,6 +1,7 @@
 # Python type hints using mypy
 
 - [Python type hints using mypy](#python-type-hints-using-mypy)
+  - [Installation](#installation)
   - [1. Introduction](#1-introduction)
   - [2. Getting started](#2-getting-started)
     - [Function signatures and dynamic vs static typing](#function-signatures-and-dynamic-vs-static-typing)
@@ -43,7 +44,7 @@
     - [Generators](#generators)
   - [7. Class basics](#7-class-basics)
     - [Instance and class attributes](#instance-and-class-attributes)
-    - [Annotating `__init__` methods](#annotating-init-methods)
+    - [Annotating `__init__` methods](#annotating-__init__-methods)
     - [Class attribute annotations](#class-attribute-annotations)
     - [Overriding statically typed methods](#overriding-statically-typed-methods)
     - [Abstract base classes and multiple inheritance](#abstract-base-classes-and-multiple-inheritance)
@@ -118,6 +119,16 @@
     - [Metaclass usage example](#metaclass-usage-example)
     - [Gotchas and limitations of metaclass support](#gotchas-and-limitations-of-metaclass-support)
   - [Sources](#sources)
+
+## Installation
+
+- Based mainly (but not completely) on [mypy Documentation](https://mypy.readthedocs.io/en/stable/index.html)
+- To install and run the examples locally:
+  1. install Pipenv (see <https://github.com/jashburn8020/getting-started/tree/master/python#pipenv>)
+  2. clone this repo into a directory
+  3. install dependencies by running pipenv install
+     - strictly speaking, you only need to install the mypy package
+  4. run mypy with the individual .py files as indicated in the example console outputs below
 
 ## 1. Introduction
 
